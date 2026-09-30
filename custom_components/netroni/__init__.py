@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         raise ConfigEntryNotReady(str(err)) from err
     entry.runtime_data = hub
 
-    dr.async_get(hass).async_get_or_create(
+    master_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, hub.master_id)},
         manufacturer=MANUFACTURER,
@@ -33,6 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         name=hub.master.get("name", "XP-Master"),
         serial_number=hub.master_id,
     )
+    hub.master_device_id = master_device.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_setup_label_sync(hass, entry, hub))

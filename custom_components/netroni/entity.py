@@ -23,7 +23,7 @@ class NetroniEntity(Entity):
             model="XP-Mini",
             name=mini.get("name") or f"XP-Mini {mini_uid}",
             serial_number=mini_uid,
-            via_device=(DOMAIN, hub.master_id),
+            via_device_id=hub.master_device_id,
         )
 
     @property

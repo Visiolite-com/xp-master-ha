@@ -18,7 +18,7 @@ from .client import NetroniError
 from .const import KELVIN_COOL, KELVIN_WARM
 from .entity import NetroniEntity
 from .hub import NetroniHub
-from .sync import async_restore_area
+from .sync import async_push_label, async_restore_area
 
 
 async def async_setup_entry(
@@ -71,7 +71,12 @@ class NetroniLight(NetroniEntity, LightEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         light = self.hub.light(self.light_id) or {}
+        # Master -> HA first (a fresh HA picks up the stored area), then HA -> Master
+        # (a new light inheriting its XP-Mini's area gets that area recorded).
         async_restore_area(self.hass, self.entity_id, light.get("area"))
+        self.hub.entry.async_create_background_task(
+            self.hass, async_push_label(self.hass, self.hub, self.entity_id), "netroni push label"
+        )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         fields: dict[str, Any] = {"on": True}

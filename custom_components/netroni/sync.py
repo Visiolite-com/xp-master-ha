@@ -37,37 +37,41 @@ def async_restore_area(hass: HomeAssistant, entity_id: str, area_name: str | Non
     ent_reg.async_update_entity(entity_id, area_id=area.id)
 
 
+async def async_push_label(hass: HomeAssistant, hub: NetroniHub, entity_id: str) -> None:
+    """Store a light's HA name and area on the Master if they differ from what it has."""
+    reg_entry = er.async_get(hass).async_get(entity_id)
+    prefix = f"{hub.master_id}_"
+    if reg_entry is None or not reg_entry.unique_id.startswith(prefix):
+        return
+    light_id = reg_entry.unique_id.removeprefix(prefix)
+    light = hub.light(light_id)
+    if light is None:
+        return
+    area_id = reg_entry.area_id
+    if area_id is None and reg_entry.device_id:
+        device = dr.async_get(hass).async_get(reg_entry.device_id)
+        area_id = device.area_id if device else None
+    area = ar.async_get(hass).async_get_area(area_id) if area_id else None
+    # Only a name the user set counts; clearing it in HA keeps the Master's name.
+    name = reg_entry.name or light.get("name", "")
+    area_name = area.name if area else None
+    if (name, area_name) == (light.get("name", ""), light.get("area")):
+        return
+    try:
+        await hub.client.call("light/update", light_id=light_id, name=name, area=area_name)
+    except NetroniError as err:
+        _LOGGER.warning("could not store name/area of %s on the XP-Master: %s", entity_id, err)
+
+
 @callback
 def async_setup_label_sync(
     hass: HomeAssistant, entry: ConfigEntry, hub: NetroniHub
 ) -> Callable[[], None]:
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
-    area_reg = ar.async_get(hass)
-    prefix = f"{hub.master_id}_"
 
-    async def push(entity_id: str) -> None:
-        reg_entry = ent_reg.async_get(entity_id)
-        if reg_entry is None or not reg_entry.unique_id.startswith(prefix):
-            return
-        light_id = reg_entry.unique_id.removeprefix(prefix)
-        light = hub.light(light_id)
-        if light is None:
-            return
-        area_id = reg_entry.area_id
-        if area_id is None and reg_entry.device_id:
-            device = dev_reg.async_get(reg_entry.device_id)
-            area_id = device.area_id if device else None
-        area = area_reg.async_get_area(area_id) if area_id else None
-        # Only a name the user set counts; clearing it in HA keeps the Master's name.
-        name = reg_entry.name or light.get("name", "")
-        area_name = area.name if area else None
-        if (name, area_name) == (light.get("name", ""), light.get("area")):
-            return
-        try:
-            await hub.client.call("light/update", light_id=light_id, name=name, area=area_name)
-        except NetroniError as err:
-            _LOGGER.warning("could not store name/area of %s on the XP-Master: %s", entity_id, err)
+    def push(entity_id: str):
+        return async_push_label(hass, hub, entity_id)
 
     def light_entities(device_id: str | None = None) -> list[str]:
         return [

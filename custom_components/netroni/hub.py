@@ -32,6 +32,7 @@ class NetroniHub:
         self.config: dict = {}
         self.states: dict[str, dict] = {}
         self.available = False
+        self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
         self._stopping = False
 
