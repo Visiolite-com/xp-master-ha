@@ -1,0 +1,48 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Connect to an XP-Master",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the XP-Master.",
+          "port": "Port of the Netroni API, normally 8765."
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "Add XP-Master",
+        "description": "Add {name} at {host}?"
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the XP-Master."
+    },
+    "abort": {
+      "already_configured": "This XP-Master is already configured.",
+      "not_netroni": "The discovered device is not an XP-Master."
+    }
+  },
+  "entity": {
+    "button": {
+      "identify_port": {
+        "name": "Identify port {port}"
+      }
+    },
+    "select": {
+      "port_mode": {
+        "name": "Port {port} mode",
+        "state": {
+          "unassigned": "Unassigned",
+          "single": "Single light",
+          "dual": "Two lights (A and B)",
+          "ganged": "One light on A and B",
+          "tunable_white": "Tunable white"
+        }
+      }
+    }
+  }
+}
