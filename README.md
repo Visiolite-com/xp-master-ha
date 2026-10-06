@@ -9,11 +9,19 @@ over its local WebSocket API and pushes updates instantly (`local_push`).
 | Device | Entities |
 | --- | --- |
 | XP-Master | Parent device |
-| XP-Mini (one per unit on the Visio-Link segment) | One **light** per configured port (dimmable or tunable white 2700–6500 K); per port a **Port N mode** select and an **Identify port N** button (configuration entities) |
+| XP-Mini (one per unit on the Visio-Link segment) | Lights created from the XP-Mini's **fixture profile**; a **Fixture profile** sensor; **Identify port 1–8** buttons |
 
-Commissioning inside Home Assistant: open an XP-Mini device, press *Identify port N* to find the
-fixture, set *Port N mode*, and the light entities appear. Rename lights and assign areas as usual;
-names and areas are stored on the Master too, so a fresh Home Assistant rebuilds from it.
+| Profile | Lights |
+| --- | --- |
+| 8 Port | Port 1–8, dimmable |
+| 4+4 Port TW | Ports 1+2 … 7+8, tunable white (2700–6500 K) |
+| 8 Port TW | All ports (master brightness + shared colour temperature) and Port 1–8, dimmable |
+| Custom 16 | Port 1A … 8B, dimmable |
+
+Change a profile under Settings → Devices & services → Netroni XP-Master → **Configure**: pick the
+XP-Mini, pick the profile, confirm. The XP-Mini's lights are replaced and their names and areas are
+lost. Scripts can use the `netroni.set_profile` action. Names and areas you give lights are stored on
+the Master too, so a fresh Home Assistant rebuilds from it.
 
 ## Install
 
@@ -25,5 +33,5 @@ The Master is discovered automatically (mDNS `_netroni._tcp`). Otherwise add
 
 ## Status
 
-Development skeleton against API v0 of the Netroni service. No authentication yet: LAN only.
+Development skeleton against API v1 of the Netroni service. No authentication yet: LAN only.
 The API client is bundled in `client.py`; it moves to a PyPI library before any core submission.

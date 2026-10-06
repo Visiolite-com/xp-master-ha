@@ -1,0 +1,19 @@
+set_profile:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: netroni
+              model: XP-Mini
+    profile:
+      required: true
+      selector:
+        select:
+          translation_key: profile
+          options:
+            - "8port"
+            - "4plus4_tw"
+            - "8port_tw"
+            - "custom16"

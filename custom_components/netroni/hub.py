@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import CannotConnect, CommandError, NetroniClient
+from .const import API_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class NetroniHub:
         )
         self.master: dict = {}
         self.config: dict = {}
+        self.profiles: dict[str, dict] = {}  # profile id -> definition, from the Master
         self.states: dict[str, dict] = {}
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
@@ -53,6 +55,12 @@ class NetroniHub:
         await self.client.connect()
         try:
             hello = await self.client.call("hello")
+            if hello.get("api_version") != API_VERSION:
+                raise CommandError(
+                    "incompatible_api",
+                    f"Master speaks API v{hello.get('api_version')}, integration needs v{API_VERSION}",
+                )
+            profiles = await self.client.call("get_profiles")
             config = await self.client.call("get_config")
             states = await self.client.call("get_state")
             await self.client.call("subscribe")
@@ -61,6 +69,7 @@ class NetroniHub:
             raise
         reload_needed = bool(self.config) and _structure(config) != _structure(self.config)
         self.master, self.config, self.states = hello["master"], config, states
+        self.profiles = {p["id"]: p for p in profiles["profiles"]}
         self.available = True
         self._notify()
         if reload_needed:
@@ -73,6 +82,21 @@ class NetroniHub:
 
     def mini(self, uid: str) -> dict | None:
         return next((m for m in self.config.get("minis", []) if m["uid"] == uid), None)
+
+    def profile_name(self, profile_id: str) -> str:
+        return self.profiles.get(profile_id, {}).get("name", profile_id)
+
+    def mini_lights(self, uid: str) -> list[dict]:
+        return [l for l in self.config.get("lights", []) if l["mini_uid"] == uid]
+
+    def expected_unique_ids(self) -> set[str]:
+        """Unique ids of every entity the current configuration should have."""
+        prefix = f"{self.master_id}_"
+        ids = {prefix + light["id"] for light in self.config.get("lights", [])}
+        for mini in self.config.get("minis", []):
+            ids.add(f"{prefix}{mini['uid']}/profile")
+            ids.update(f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, 9))
+        return ids
 
     # --- listeners ---------------------------------------------------------
 

@@ -26,21 +26,68 @@
       "not_netroni": "The discovered device is not an XP-Master."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Change an XP-Mini's fixture profile",
+        "description": "Pick the XP-Mini to reconfigure. Use its Identify port buttons to find it if needed.",
+        "data": {
+          "mini": "XP-Mini"
+        }
+      },
+      "profile": {
+        "title": "Fixture profile for {mini}",
+        "description": "Current profile: {current}. The profile decides which lights this XP-Mini has and how its ports are driven.",
+        "data": {
+          "profile": "New profile"
+        }
+      },
+      "confirm": {
+        "title": "Replace the lights of {mini}?",
+        "description": "Changing {mini} from {current} to {new} removes its {old_count} current lights and creates {new_count} new ones.\n\nThe current lights' names and areas are lost, and any automations, scenes or dashboards that use them must be updated.\n\nSubmit to apply the new profile."
+      }
+    },
+    "abort": {
+      "not_loaded": "The XP-Master is not connected. Try again when it is online.",
+      "mini_gone": "That XP-Mini is no longer part of this XP-Master.",
+      "profile_unchanged": "That is already the XP-Mini's profile; nothing was changed.",
+      "set_failed": "The XP-Master rejected the change: {error}"
+    }
+  },
   "entity": {
     "button": {
       "identify_port": {
         "name": "Identify port {port}"
       }
     },
-    "select": {
-      "port_mode": {
-        "name": "Port {port} mode",
-        "state": {
-          "unassigned": "Unassigned",
-          "single": "Single light",
-          "dual": "Two lights (A and B)",
-          "ganged": "One light on A and B",
-          "tunable_white": "Tunable white"
+    "sensor": {
+      "profile": {
+        "name": "Fixture profile"
+      }
+    }
+  },
+  "selector": {
+    "profile": {
+      "options": {
+        "8port": "8 Port",
+        "4plus4_tw": "4+4 Port TW",
+        "8port_tw": "8 Port TW",
+        "custom16": "Custom 16"
+      }
+    }
+  },
+  "services": {
+    "set_profile": {
+      "name": "Set fixture profile",
+      "description": "Assigns a fixture profile to an XP-Mini. Its lights are replaced and their names and areas are lost.",
+      "fields": {
+        "device_id": {
+          "name": "XP-Mini",
+          "description": "The XP-Mini to reconfigure."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "The new fixture profile."
         }
       }
     }

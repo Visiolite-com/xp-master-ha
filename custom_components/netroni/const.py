@@ -3,9 +3,12 @@
 DOMAIN = "netroni"
 DEFAULT_PORT = 8765
 MANUFACTURER = "Visiolite"
+API_VERSION = 1  # Netroni service API this integration speaks
 
 PORTS_PER_MINI = 8
-PORT_MODES = ["unassigned", "single", "dual", "ganged", "tunable_white"]
 
 KELVIN_WARM = 2700
 KELVIN_COOL = 6500
+
+SERVICE_SET_PROFILE = "set_profile"
+ATTR_PROFILE = "profile"

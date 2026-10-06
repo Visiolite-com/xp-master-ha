@@ -35,8 +35,7 @@ class NetroniLight(NetroniEntity, LightEntity):
         super().__init__(hub, light["mini_uid"], light["id"])
         self.light_id = light["id"]
         # Master-stored name wins on first registration, so a fresh HA rebuilds from the Master.
-        suffix = light["id"].rsplit("/", 1)[1].upper()
-        self._attr_name = light.get("name") or f"Port {suffix}"
+        self._attr_name = light.get("name") or light["default_name"]
         if light["kind"] == "tunable_white":
             self._attr_supported_color_modes = {ColorMode.COLOR_TEMP}
             self._attr_color_mode = ColorMode.COLOR_TEMP
