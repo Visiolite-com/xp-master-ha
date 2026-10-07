@@ -9,19 +9,21 @@ over its local WebSocket API and pushes updates instantly (`local_push`).
 | Device | Entities |
 | --- | --- |
 | XP-Master | Parent device |
-| XP-Mini (one per unit on the Visio-Link segment) | Lights created from the XP-Mini's **fixture profile**; a **Fixture profile** sensor; **Identify port 1–8** buttons |
+| XP-Mini (one per unit on the Visio-Link segment) | A **Master** light, the channel lights below, and **Identify Ch1–Ch8** buttons |
 
-| Profile | Lights |
-| --- | --- |
-| 8 Port | Port 1–8, dimmable |
-| 4+4 Port TW | Ports 1+2 … 7+8, tunable white (2700–6500 K) |
-| 8 Port TW | All ports (master brightness + shared colour temperature) and Port 1–8, dimmable |
-| Custom 16 | Port 1A … 8B, dimmable |
+| Light | Kind | Behaviour |
+| --- | --- | --- |
+| Master | Dimmable | On/off switches every light of the XP-Mini; its brightness scales every light's output |
+| Ch1A … Ch8B | Dimmable | One per channel (default) |
+| Chn TW | Tunable white, 2700–6500 K | Replaces ChnA (warm) and ChnB (cool) when the channel is paired |
 
-Change a profile under Settings → Devices & services → Netroni XP-Master → **Configure**: pick the
-XP-Mini, pick the profile, confirm. The XP-Mini's lights are replaced and their names and areas are
-lost. Scripts can use the `netroni.set_profile` action. Names and areas you give lights are stored on
-the Master too, so a fresh Home Assistant rebuilds from it.
+Lights report their real output, so dimming the Master light visibly dims every light.
+
+Pair or unpair channels under Settings → Devices & services → Netroni XP-Master → **gear icon**:
+pick the XP-Mini, tick the channels that should be tunable white, confirm. Only the lights of the
+channels you change are replaced (and lose their names and areas). Scripts can use the
+`netroni.pair_channel` and `netroni.unpair_channel` actions. Names and areas you give lights are
+stored on the Master too, so a fresh Home Assistant rebuilds from it.
 
 ## Install
 
@@ -33,5 +35,5 @@ The Master is discovered automatically (mDNS `_netroni._tcp`). Otherwise add
 
 ## Status
 
-Development skeleton against API v1 of the Netroni service. No authentication yet: LAN only.
+Development skeleton against API v2 of the Netroni service. No authentication yet: LAN only.
 The API client is bundled in `client.py`; it moves to a PyPI library before any core submission.

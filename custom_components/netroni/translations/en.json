@@ -29,65 +29,64 @@
   "options": {
     "step": {
       "init": {
-        "title": "Change an XP-Mini's fixture profile",
-        "description": "Pick the XP-Mini to reconfigure. Use its Identify port buttons to find it if needed.",
+        "title": "Tunable-white pairs",
+        "description": "Pick the XP-Mini to configure. Use its Identify Ch buttons to find the fixtures if needed.",
         "data": {
           "mini": "XP-Mini"
         }
       },
-      "profile": {
-        "title": "Fixture profile for {mini}",
-        "description": "Current profile: {current}. The profile decides which lights this XP-Mini has and how its ports are driven.",
+      "channels": {
+        "title": "Tunable-white pairs on {mini}",
+        "description": "Tick a channel to combine its A (warm white) and B (cool white) outputs into one tunable-white light. Untick it to split them back into two dimmable lights.",
         "data": {
-          "profile": "New profile"
+          "paired": "Paired channels"
         }
       },
       "confirm": {
-        "title": "Replace the lights of {mini}?",
-        "description": "Changing {mini} from {current} to {new} removes its {old_count} current lights and creates {new_count} new ones.\n\nThe current lights' names and areas are lost, and any automations, scenes or dashboards that use them must be updated.\n\nSubmit to apply the new profile."
+        "title": "Change the lights of {mini}?",
+        "description": "{changes}\n\nThe lights that are replaced lose their names and areas, and any automations, scenes or dashboards that use them must be updated. Other channels are not affected.\n\nSubmit to apply."
       }
     },
     "abort": {
       "not_loaded": "The XP-Master is not connected. Try again when it is online.",
       "mini_gone": "That XP-Mini is no longer part of this XP-Master.",
-      "profile_unchanged": "That is already the XP-Mini's profile; nothing was changed.",
+      "no_changes": "Nothing was changed.",
       "set_failed": "The XP-Master rejected the change: {error}"
     }
   },
   "entity": {
     "button": {
-      "identify_port": {
-        "name": "Identify port {port}"
-      }
-    },
-    "sensor": {
-      "profile": {
-        "name": "Fixture profile"
-      }
-    }
-  },
-  "selector": {
-    "profile": {
-      "options": {
-        "8port": "8 Port",
-        "4plus4_tw": "4+4 Port TW",
-        "8port_tw": "8 Port TW",
-        "custom16": "Custom 16"
+      "identify_channel": {
+        "name": "Identify Ch{channel}"
       }
     }
   },
   "services": {
-    "set_profile": {
-      "name": "Set fixture profile",
-      "description": "Assigns a fixture profile to an XP-Mini. Its lights are replaced and their names and areas are lost.",
+    "pair_channel": {
+      "name": "Pair channel",
+      "description": "Combines ChnA (warm) and ChnB (cool) of an XP-Mini into one tunable-white light. The two single lights are replaced and lose their names and areas.",
       "fields": {
         "device_id": {
           "name": "XP-Mini",
-          "description": "The XP-Mini to reconfigure."
+          "description": "The XP-Mini to configure."
         },
-        "profile": {
-          "name": "Profile",
-          "description": "The new fixture profile."
+        "channel": {
+          "name": "Channel",
+          "description": "Channel number 1-8 (Ch1 = Ch1A + Ch1B)."
+        }
+      }
+    },
+    "unpair_channel": {
+      "name": "Unpair channel",
+      "description": "Splits an XP-Mini's Chn tunable-white light back into ChnA and ChnB. The tunable-white light is replaced and loses its name and area.",
+      "fields": {
+        "device_id": {
+          "name": "XP-Mini",
+          "description": "The XP-Mini to configure."
+        },
+        "channel": {
+          "name": "Channel",
+          "description": "Channel number 1-8."
         }
       }
     }

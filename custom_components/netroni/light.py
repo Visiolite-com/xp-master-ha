@@ -1,4 +1,4 @@
-"""Light entities: one per light produced by a configured port."""
+"""Light entities: the Master light, one per channel, or one per tunable-white pair."""
 from __future__ import annotations
 
 from typing import Any

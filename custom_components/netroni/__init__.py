@@ -13,35 +13,37 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .client import CannotConnect, CommandError, NetroniError
-from .const import ATTR_PROFILE, DOMAIN, MANUFACTURER, SERVICE_SET_PROFILE
+from .const import ATTR_CHANNEL, CHANNEL_PAIRS, DOMAIN, MANUFACTURER, SERVICE_PAIR, SERVICE_UNPAIR
 from .hub import NetroniHub
 from .sync import async_setup_label_sync
 
-PLATFORMS = [Platform.BUTTON, Platform.LIGHT, Platform.SENSOR]
+PLATFORMS = [Platform.BUTTON, Platform.LIGHT]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-SET_PROFILE_SCHEMA = vol.Schema(
-    {vol.Required(ATTR_DEVICE_ID): cv.string, vol.Required(ATTR_PROFILE): cv.string}
+CHANNEL_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): cv.string,
+        vol.Required(ATTR_CHANNEL): vol.All(vol.Coerce(int), vol.Range(min=1, max=CHANNEL_PAIRS)),
+    }
 )
 
 type NetroniConfigEntry = ConfigEntry[NetroniHub]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    async def set_profile(call: ServiceCall) -> None:
-        hub, uid = _hub_for_mini_device(hass, call.data[ATTR_DEVICE_ID])
-        profile = call.data[ATTR_PROFILE]
-        if profile not in hub.profiles:
-            raise ServiceValidationError(
-                f"Unknown profile {profile!r}; choose from {', '.join(hub.profiles)}"
-            )
-        try:
-            await hub.client.call("mini/set_profile", uid=uid, profile=profile)
-        except NetroniError as err:
-            raise HomeAssistantError(f"XP-Master rejected the profile change: {err}") from err
+    def make_handler(command: str):
+        async def handle(call: ServiceCall) -> None:
+            hub, uid = _hub_for_mini_device(hass, call.data[ATTR_DEVICE_ID])
+            try:
+                await hub.client.call(command, uid=uid, channel=call.data[ATTR_CHANNEL])
+            except NetroniError as err:
+                raise HomeAssistantError(f"XP-Master rejected the change: {err}") from err
 
-    hass.services.async_register(DOMAIN, SERVICE_SET_PROFILE, set_profile, schema=SET_PROFILE_SCHEMA)
+        return handle
+
+    hass.services.async_register(DOMAIN, SERVICE_PAIR, make_handler("mini/pair"), schema=CHANNEL_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_UNPAIR, make_handler("mini/unpair"), schema=CHANNEL_SCHEMA)
     return True
 
 
@@ -72,8 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
     )
     hub.master_device_id = master_device.id
 
-    # Entities from an earlier profile (or an older integration version) are removed, so
-    # changing a profile leaves no unavailable leftovers behind.
+    # Entities that no longer match the configuration (lights of a channel that was paired or
+    # unpaired, or from an older integration version) are removed, so none linger unavailable.
     ent_reg = er.async_get(hass)
     expected = hub.expected_unique_ids()
     for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):

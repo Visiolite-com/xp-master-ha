@@ -24,7 +24,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import CannotConnect, CommandError, NetroniClient, NetroniError
-from .const import DEFAULT_PORT, DOMAIN
+from .const import CHANNEL_PAIRS, DEFAULT_PORT, DOMAIN
 
 
 class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -96,11 +96,12 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class NetroniOptionsFlow(OptionsFlow):
-    """Configure: assign a fixture profile to an XP-Mini, with a confirmation step."""
+    """Configure: choose which of an XP-Mini's channels are paired into tunable-white lights."""
 
     def __init__(self) -> None:
         self._uid = ""
-        self._profile = ""
+        self._pair: list[int] = []
+        self._unpair: list[int] = []
 
     @property
     def _hub(self):
@@ -109,75 +110,65 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
-        hub = self._hub
         if user_input is not None:
             self._uid = user_input["mini"]
-            return await self.async_step_profile()
+            return await self.async_step_channels()
         options = [
-            SelectOptionDict(
-                value=m["uid"],
-                label=f"{m['name']} ({m['uid']}) · {hub.profile_name(m['profile'])}",
-            )
-            for m in hub.config.get("minis", [])
+            SelectOptionDict(value=m["uid"], label=f"{m['name']} ({m['uid']}) · {_pairs_text(m['pairs'])}")
+            for m in self._hub.config.get("minis", [])
         ]
         schema = vol.Schema(
-            {
-                vol.Required("mini"): SelectSelector(
-                    SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST)
-                )
-            }
+            {vol.Required("mini"): SelectSelector(SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}
         )
         return self.async_show_form(step_id="init", data_schema=schema)
 
-    async def async_step_profile(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        hub = self._hub
-        mini = hub.mini(self._uid)
+    async def async_step_channels(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        mini = self._hub.mini(self._uid)
         if mini is None:
             return self.async_abort(reason="mini_gone")
+        current = set(mini["pairs"])
         if user_input is not None:
-            if user_input["profile"] == mini["profile"]:
-                return self.async_abort(reason="profile_unchanged")
-            self._profile = user_input["profile"]
+            wanted = {int(c) for c in user_input["paired"]}
+            self._pair, self._unpair = sorted(wanted - current), sorted(current - wanted)
+            if not self._pair and not self._unpair:
+                return self.async_abort(reason="no_changes")
             return await self.async_step_confirm()
         options = [
-            SelectOptionDict(value=p["id"], label=f"{p['name']} · {len(p['lights'])} lights")
-            for p in hub.profiles.values()
+            SelectOptionDict(value=str(ch), label=f"Ch{ch}A + Ch{ch}B → Ch{ch} TW")
+            for ch in range(1, CHANNEL_PAIRS + 1)
         ]
         schema = vol.Schema(
             {
-                vol.Required("profile", default=mini["profile"]): SelectSelector(
-                    SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST)
+                vol.Optional("paired", default=[str(c) for c in sorted(current)]): SelectSelector(
+                    SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST)
                 )
             }
         )
         return self.async_show_form(
-            step_id="profile",
-            data_schema=schema,
-            description_placeholders={
-                "mini": mini["name"],
-                "current": hub.profile_name(mini["profile"]),
-            },
+            step_id="channels", data_schema=schema, description_placeholders={"mini": mini["name"]}
         )
 
     async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        hub = self._hub
-        mini = hub.mini(self._uid)
+        mini = self._hub.mini(self._uid)
         if mini is None:
             return self.async_abort(reason="mini_gone")
         if user_input is not None:
             try:
-                await hub.client.call("mini/set_profile", uid=self._uid, profile=self._profile)
+                for ch in self._pair:
+                    await self._hub.client.call("mini/pair", uid=self._uid, channel=ch)
+                for ch in self._unpair:
+                    await self._hub.client.call("mini/unpair", uid=self._uid, channel=ch)
             except NetroniError as err:
                 return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
             return self.async_create_entry(data=dict(self.config_entry.options))
+        changes = [f"Ch{c}A + Ch{c}B become Ch{c} TW" for c in self._pair]
+        changes += [f"Ch{c} TW becomes Ch{c}A and Ch{c}B" for c in self._unpair]
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
-            description_placeholders={
-                "mini": mini["name"],
-                "current": hub.profile_name(mini["profile"]),
-                "new": hub.profile_name(self._profile),
-                "old_count": str(len(hub.mini_lights(self._uid))),
-                "new_count": str(len(hub.profiles[self._profile]["lights"])),
-            },
+            description_placeholders={"mini": mini["name"], "changes": "\n".join(f"- {c}" for c in changes)},
         )
+
+
+def _pairs_text(pairs: list[int]) -> str:
+    return "TW: " + ", ".join(f"Ch{c}" for c in pairs) if pairs else "no TW pairs"

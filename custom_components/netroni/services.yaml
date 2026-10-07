@@ -1,4 +1,4 @@
-set_profile:
+pair_channel:
   fields:
     device_id:
       required: true
@@ -7,13 +7,26 @@ set_profile:
           filter:
             - integration: netroni
               model: XP-Mini
-    profile:
+    channel:
       required: true
       selector:
-        select:
-          translation_key: profile
-          options:
-            - "8port"
-            - "4plus4_tw"
-            - "8port_tw"
-            - "custom16"
+        number:
+          min: 1
+          max: 8
+          mode: box
+unpair_channel:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: netroni
+              model: XP-Mini
+    channel:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 8
+          mode: box
