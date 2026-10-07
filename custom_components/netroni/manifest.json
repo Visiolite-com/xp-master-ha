@@ -8,6 +8,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Visiolite-com/xp-master-ha/issues",
   "requirements": [],
-  "version": "0.6.0",
+  "version": "0.6.1",
   "zeroconf": ["_netroni._tcp.local."]
 }

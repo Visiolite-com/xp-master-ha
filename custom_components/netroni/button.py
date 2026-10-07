@@ -8,7 +8,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
-from .client import NetroniError
+from .client import CommandError, NetroniError
 from .const import PORTS_PER_MINI
 from .entity import NetroniEntity
 from .hub import NetroniHub
@@ -37,8 +37,19 @@ class IdentifyPortButton(NetroniEntity, ButtonEntity):
         self.port = port
         self._attr_translation_placeholders = {"port": str(port)}
 
+    @property
+    def available(self) -> bool:
+        # Always available: a button's state is its last-press time, so going unavailable and
+        # back would log a false "Pressed" whenever the XP-Mini drops out. A press on an
+        # offline XP-Mini is refused with a clear message instead.
+        return True
+
     async def async_press(self) -> None:
         try:
             await self.hub.client.call("mini/identify", uid=self.mini_uid, port=self.port)
-        except NetroniError as err:
+        except CommandError as err:
+            if err.code == "offline":
+                raise HomeAssistantError(f"Cannot identify: {str(err).split(': ', 1)[-1]}") from err
             raise HomeAssistantError(f"XP-Master rejected identify: {err}") from err
+        except NetroniError as err:
+            raise HomeAssistantError(f"Cannot reach the XP-Master: {err}") from err

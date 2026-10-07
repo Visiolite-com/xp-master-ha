@@ -35,6 +35,12 @@ class PortIdentifiedEvent(NetroniEntity, EventEntity):
     def __init__(self, hub: NetroniHub, mini_uid: str) -> None:
         super().__init__(hub, mini_uid, f"{mini_uid}/port_identified")
 
+    @property
+    def available(self) -> bool:
+        # Always available: its state is the time of the last signal, so an availability
+        # round-trip would otherwise log a false "Port identified".
+        return True
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self.async_on_remove(self.hub.async_add_identify_listener(self.mini_uid, self._handle))
