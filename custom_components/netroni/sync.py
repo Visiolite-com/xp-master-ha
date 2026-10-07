@@ -18,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from .client import NetroniError
 from .const import DOMAIN
 from .hub import NetroniHub
+from .identify import async_dismiss_for_entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ def async_setup_label_sync(
             return
         if data["entity_id"] in light_entities():
             entry.async_create_background_task(hass, push(data["entity_id"]), "netroni push label")
+            if "name" in data["changes"]:
+                async_dismiss_for_entity(hass, hub, data["entity_id"])
 
     @callback
     def on_device_update(event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:

@@ -17,7 +17,7 @@ from .const import ATTR_PORT, DOMAIN, MANUFACTURER, PORTS_PER_MINI, SERVICE_PAIR
 from .hub import NetroniHub
 from .sync import async_setup_label_sync
 
-PLATFORMS = [Platform.BUTTON, Platform.LIGHT]
+PLATFORMS = [Platform.BUTTON, Platform.EVENT, Platform.LIGHT]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 

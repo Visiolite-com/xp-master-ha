@@ -37,6 +37,9 @@ class NetroniHub:
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
+        self._identify_listeners: dict[str, set[Callable[[dict], None]]] = {}
+        # Open port-identification notifications: notification id -> light entity ids.
+        self.identify_notifications: dict[str, set[str]] = {}
         self._stopping = False
         self._reload_cancel: Callable[[], None] | None = None
 
@@ -97,6 +100,7 @@ class NetroniHub:
             ids.update(
                 f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
             )
+            ids.add(f"{prefix}{mini['uid']}/port_identified")
         return ids
 
     # --- listeners ---------------------------------------------------------
@@ -122,6 +126,20 @@ class NetroniHub:
             self.entry.async_create_background_task(
                 self.hass, self._refresh_config(), "netroni refresh config"
             )
+        elif event == "port_identified":
+            from .identify import async_notify_port_identified  # avoid an import cycle
+
+            async_notify_port_identified(self.hass, self, data)
+            for listener in list(self._identify_listeners.get(data.get("uid"), ())):
+                listener(data)
+
+    @callback
+    def async_add_identify_listener(
+        self, mini_uid: str, listener: Callable[[dict], None]
+    ) -> Callable[[], None]:
+        listeners = self._identify_listeners.setdefault(mini_uid, set())
+        listeners.add(listener)
+        return lambda: listeners.discard(listener)
 
     async def _refresh_config(self) -> None:
         try:

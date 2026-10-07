@@ -59,6 +59,18 @@
       "identify_port": {
         "name": "Identify Port {port}"
       }
+    },
+    "event": {
+      "port_identified": {
+        "name": "Port identification",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "port_identified": "Port identified"
+            }
+          }
+        }
+      }
     }
   },
   "services": {
