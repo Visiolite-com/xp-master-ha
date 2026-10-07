@@ -13,7 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .client import CannotConnect, CommandError, NetroniError
-from .const import ATTR_CHANNEL, CHANNEL_PAIRS, DOMAIN, MANUFACTURER, SERVICE_PAIR, SERVICE_UNPAIR
+from .const import ATTR_PORT, DOMAIN, MANUFACTURER, PORTS_PER_MINI, SERVICE_PAIR, SERVICE_UNPAIR
 from .hub import NetroniHub
 from .sync import async_setup_label_sync
 
@@ -21,10 +21,10 @@ PLATFORMS = [Platform.BUTTON, Platform.LIGHT]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-CHANNEL_SCHEMA = vol.Schema(
+PORT_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): cv.string,
-        vol.Required(ATTR_CHANNEL): vol.All(vol.Coerce(int), vol.Range(min=1, max=CHANNEL_PAIRS)),
+        vol.Required(ATTR_PORT): vol.All(vol.Coerce(int), vol.Range(min=1, max=PORTS_PER_MINI)),
     }
 )
 
@@ -36,14 +36,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         async def handle(call: ServiceCall) -> None:
             hub, uid = _hub_for_mini_device(hass, call.data[ATTR_DEVICE_ID])
             try:
-                await hub.client.call(command, uid=uid, channel=call.data[ATTR_CHANNEL])
+                await hub.client.call(command, uid=uid, port=call.data[ATTR_PORT])
             except NetroniError as err:
                 raise HomeAssistantError(f"XP-Master rejected the change: {err}") from err
 
         return handle
 
-    hass.services.async_register(DOMAIN, SERVICE_PAIR, make_handler("mini/pair"), schema=CHANNEL_SCHEMA)
-    hass.services.async_register(DOMAIN, SERVICE_UNPAIR, make_handler("mini/unpair"), schema=CHANNEL_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_PAIR, make_handler("mini/pair"), schema=PORT_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_UNPAIR, make_handler("mini/unpair"), schema=PORT_SCHEMA)
     return True
 
 
@@ -74,7 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
     )
     hub.master_device_id = master_device.id
 
-    # Entities that no longer match the configuration (lights of a channel that was paired or
+    # Entities that no longer match the configuration (lights of a port that was paired or
     # unpaired, or from an older integration version) are removed, so none linger unavailable.
     ent_reg = er.async_get(hass)
     expected = hub.expected_unique_ids()

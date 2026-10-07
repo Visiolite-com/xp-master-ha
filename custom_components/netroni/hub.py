@@ -12,7 +12,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 
 from .client import CannotConnect, CommandError, NetroniClient
-from .const import API_VERSION, CHANNEL_PAIRS
+from .const import API_VERSION, PORTS_PER_MINI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class NetroniHub:
         ids = {prefix + light["id"] for light in self.config.get("lights", [])}
         for mini in self.config.get("minis", []):
             ids.update(
-                f"{prefix}{mini['uid']}/{channel}/identify" for channel in range(1, CHANNEL_PAIRS + 1)
+                f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
             )
         return ids
 

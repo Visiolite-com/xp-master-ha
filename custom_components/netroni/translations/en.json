@@ -29,22 +29,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Tunable-white pairs",
-        "description": "Pick the XP-Mini to configure. Use its Identify Ch buttons to find the fixtures if needed.",
+        "title": "Tunable-white ports",
+        "description": "Pick the XP-Mini to configure. Use its Identify Port buttons to find the fixtures if needed.",
         "data": {
           "mini": "XP-Mini"
         }
       },
-      "channels": {
-        "title": "Tunable-white pairs on {mini}",
-        "description": "Tick a channel to combine its A (warm white) and B (cool white) outputs into one tunable-white light. Untick it to split them back into two dimmable lights.",
+      "ports": {
+        "title": "Tunable-white ports on {mini}",
+        "description": "Tick a port to make it one tunable-white light (Port nT): A is warm white, B is cool white. Untick it to split it back into two dimmable lights, Port nA and Port nB.",
         "data": {
-          "paired": "Paired channels"
+          "paired": "Tunable-white ports"
         }
       },
       "confirm": {
         "title": "Change the lights of {mini}?",
-        "description": "{changes}\n\nThe lights that are replaced lose their names and areas, and any automations, scenes or dashboards that use them must be updated. Other channels are not affected.\n\nSubmit to apply."
+        "description": "{changes}\n\nThe lights that are replaced lose their names and areas, and any automations, scenes or dashboards that use them must be updated. Other ports are not affected.\n\nSubmit to apply."
       }
     },
     "abort": {
@@ -56,37 +56,37 @@
   },
   "entity": {
     "button": {
-      "identify_channel": {
-        "name": "Identify Ch{channel}"
+      "identify_port": {
+        "name": "Identify Port {port}"
       }
     }
   },
   "services": {
-    "pair_channel": {
-      "name": "Pair channel",
-      "description": "Combines ChnA (warm) and ChnB (cool) of an XP-Mini into one tunable-white light. The two single lights are replaced and lose their names and areas.",
+    "pair_port": {
+      "name": "Make port tunable white",
+      "description": "Turns Port nA (warm) and Port nB (cool) of an XP-Mini into one tunable-white light, Port nT. The two single lights are replaced and lose their names and areas.",
       "fields": {
         "device_id": {
           "name": "XP-Mini",
           "description": "The XP-Mini to configure."
         },
-        "channel": {
-          "name": "Channel",
-          "description": "Channel number 1-8 (Ch1 = Ch1A + Ch1B)."
+        "port": {
+          "name": "Port",
+          "description": "Port number 1-8."
         }
       }
     },
-    "unpair_channel": {
-      "name": "Unpair channel",
-      "description": "Splits an XP-Mini's Chn tunable-white light back into ChnA and ChnB. The tunable-white light is replaced and loses its name and area.",
+    "unpair_port": {
+      "name": "Split tunable-white port",
+      "description": "Splits Port nT of an XP-Mini back into Port nA and Port nB. The tunable-white light is replaced and loses its name and area.",
       "fields": {
         "device_id": {
           "name": "XP-Mini",
           "description": "The XP-Mini to configure."
         },
-        "channel": {
-          "name": "Channel",
-          "description": "Channel number 1-8."
+        "port": {
+          "name": "Port",
+          "description": "Port number 1-8."
         }
       }
     }

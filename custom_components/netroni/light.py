@@ -1,4 +1,4 @@
-"""Light entities: the Master light, one per channel, or one per tunable-white pair."""
+"""Light entities: one per port output (Port nA/nB) or one per tunable-white port (Port nT)."""
 from __future__ import annotations
 
 from typing import Any

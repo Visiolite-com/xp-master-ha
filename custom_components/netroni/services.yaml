@@ -1,4 +1,4 @@
-pair_channel:
+pair_port:
   fields:
     device_id:
       required: true
@@ -7,14 +7,14 @@ pair_channel:
           filter:
             - integration: netroni
               model: XP-Mini
-    channel:
+    port:
       required: true
       selector:
         number:
           min: 1
           max: 8
           mode: box
-unpair_channel:
+unpair_port:
   fields:
     device_id:
       required: true
@@ -23,7 +23,7 @@ unpair_channel:
           filter:
             - integration: netroni
               model: XP-Mini
-    channel:
+    port:
       required: true
       selector:
         number:

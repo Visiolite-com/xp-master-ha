@@ -24,7 +24,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import CannotConnect, CommandError, NetroniClient, NetroniError
-from .const import CHANNEL_PAIRS, DEFAULT_PORT, DOMAIN
+from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
 
 
 class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -96,7 +96,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class NetroniOptionsFlow(OptionsFlow):
-    """Configure: choose which of an XP-Mini's channels are paired into tunable-white lights."""
+    """Configure: choose which of an XP-Mini's ports are tunable-white lights."""
 
     def __init__(self) -> None:
         self._uid = ""
@@ -112,7 +112,7 @@ class NetroniOptionsFlow(OptionsFlow):
             return self.async_abort(reason="not_loaded")
         if user_input is not None:
             self._uid = user_input["mini"]
-            return await self.async_step_channels()
+            return await self.async_step_ports()
         options = [
             SelectOptionDict(value=m["uid"], label=f"{m['name']} ({m['uid']}) · {_pairs_text(m['pairs'])}")
             for m in self._hub.config.get("minis", [])
@@ -122,7 +122,7 @@ class NetroniOptionsFlow(OptionsFlow):
         )
         return self.async_show_form(step_id="init", data_schema=schema)
 
-    async def async_step_channels(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_ports(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         mini = self._hub.mini(self._uid)
         if mini is None:
             return self.async_abort(reason="mini_gone")
@@ -134,8 +134,8 @@ class NetroniOptionsFlow(OptionsFlow):
                 return self.async_abort(reason="no_changes")
             return await self.async_step_confirm()
         options = [
-            SelectOptionDict(value=str(ch), label=f"Ch{ch}A + Ch{ch}B → Ch{ch} TW")
-            for ch in range(1, CHANNEL_PAIRS + 1)
+            SelectOptionDict(value=str(p), label=f"Port {p}A + Port {p}B → Port {p}T")
+            for p in range(1, PORTS_PER_MINI + 1)
         ]
         schema = vol.Schema(
             {
@@ -145,7 +145,7 @@ class NetroniOptionsFlow(OptionsFlow):
             }
         )
         return self.async_show_form(
-            step_id="channels", data_schema=schema, description_placeholders={"mini": mini["name"]}
+            step_id="ports", data_schema=schema, description_placeholders={"mini": mini["name"]}
         )
 
     async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -161,8 +161,8 @@ class NetroniOptionsFlow(OptionsFlow):
             except NetroniError as err:
                 return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
             return self.async_create_entry(data=dict(self.config_entry.options))
-        changes = [f"Ch{c}A + Ch{c}B become Ch{c} TW" for c in self._pair]
-        changes += [f"Ch{c} TW becomes Ch{c}A and Ch{c}B" for c in self._unpair]
+        changes = [f"Port {p}A + Port {p}B become Port {p}T" for p in self._pair]
+        changes += [f"Port {p}T becomes Port {p}A and Port {p}B" for p in self._unpair]
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
@@ -171,4 +171,4 @@ class NetroniOptionsFlow(OptionsFlow):
 
 
 def _pairs_text(pairs: list[int]) -> str:
-    return "TW: " + ", ".join(f"Ch{c}" for c in pairs) if pairs else "no TW pairs"
+    return "tunable white: " + ", ".join(f"Port {p}T" for p in pairs) if pairs else "no tunable-white ports"
