@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 
 from .client import CannotConnect, CommandError, NetroniClient
 from .const import API_VERSION, CHANNEL_PAIRS
@@ -16,6 +17,7 @@ from .const import API_VERSION, CHANNEL_PAIRS
 _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
+RELOAD_DELAY = 2.0
 
 
 class NetroniHub:
@@ -36,6 +38,7 @@ class NetroniHub:
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
         self._stopping = False
+        self._reload_cancel: Callable[[], None] | None = None
 
     @property
     def master_id(self) -> str:
@@ -48,6 +51,9 @@ class NetroniHub:
 
     async def async_stop(self) -> None:
         self._stopping = True
+        if self._reload_cancel is not None:
+            self._reload_cancel()
+            self._reload_cancel = None
         await self.client.close()
 
     async def _connect_and_sync(self) -> None:
@@ -156,8 +162,20 @@ class NetroniHub:
 
     @callback
     def _schedule_reload(self) -> None:
-        """Lights or XP-Minis were added or removed: rebuild the entities."""
-        self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+        """Lights or XP-Minis were added or removed: rebuild the entities.
+
+        Waits RELOAD_DELAY (restarting on each new request), so a reload never cuts off a
+        command that is still running on this connection, e.g. from the options dialog.
+        """
+        if self._reload_cancel is not None:
+            self._reload_cancel()
+        self._reload_cancel = async_call_later(self.hass, RELOAD_DELAY, self._do_reload)
+
+    @callback
+    def _do_reload(self, _now) -> None:
+        self._reload_cancel = None
+        if not self._stopping:
+            self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
 
 
 def _structure(config: dict) -> tuple:

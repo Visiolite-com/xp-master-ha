@@ -153,11 +153,11 @@ class NetroniOptionsFlow(OptionsFlow):
         if mini is None:
             return self.async_abort(reason="mini_gone")
         if user_input is not None:
+            # One call for the whole change: the Master applies it at once, so a reload of
+            # this integration (triggered by the change) can't cut a series of calls short.
+            wanted = sorted((set(mini["pairs"]) | set(self._pair)) - set(self._unpair))
             try:
-                for ch in self._pair:
-                    await self._hub.client.call("mini/pair", uid=self._uid, channel=ch)
-                for ch in self._unpair:
-                    await self._hub.client.call("mini/unpair", uid=self._uid, channel=ch)
+                await self._hub.client.call("mini/set_pairs", uid=self._uid, pairs=wanted)
             except NetroniError as err:
                 return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
             return self.async_create_entry(data=dict(self.config_entry.options))
