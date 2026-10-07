@@ -28,7 +28,8 @@ class NetroniEntity(Entity):
 
     @property
     def available(self) -> bool:
-        return self.hub.available
+        """Unavailable while the Master is unreachable or this XP-Mini is offline."""
+        return self.hub.available and self.hub.mini_online(self.mini_uid)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))

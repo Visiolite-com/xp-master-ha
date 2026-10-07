@@ -89,6 +89,10 @@ class NetroniHub:
     def mini(self, uid: str) -> dict | None:
         return next((m for m in self.config.get("minis", []) if m["uid"] == uid), None)
 
+    def mini_online(self, uid: str) -> bool:
+        mini = self.mini(uid)
+        return bool(mini) and mini.get("online", True)
+
     def mini_lights(self, uid: str) -> list[dict]:
         return [l for l in self.config.get("lights", []) if l["mini_uid"] == uid]
 
@@ -126,6 +130,12 @@ class NetroniHub:
             self.entry.async_create_background_task(
                 self.hass, self._refresh_config(), "netroni refresh config"
             )
+        elif event == "mini_status":
+            mini = self.mini(data.get("uid", ""))
+            if mini is not None:
+                mini["online"] = bool(data.get("online"))
+                self._notify()
+            # An XP-Mini new to the configuration arrives with config_changed and a reload.
         elif event == "port_identified":
             from .identify import async_notify_port_identified  # avoid an import cycle
 
