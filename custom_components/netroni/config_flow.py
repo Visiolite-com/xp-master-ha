@@ -114,7 +114,9 @@ class NetroniOptionsFlow(OptionsFlow):
             return self.async_abort(reason="not_loaded")
         return self.async_show_menu(step_id="init", menu_options=["tunable_white", "matter"])
 
-    # --- Matter: pair the XP-Master with SmartThings, Google Home, Alexa or Apple Home ---
+    # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".
+
+    # --- Matter connections: SmartThings, Google Home, Alexa, Apple Home ---
 
     async def async_step_matter(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         try:
@@ -123,27 +125,33 @@ class NetroniOptionsFlow(OptionsFlow):
             return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
         if not status.get("connected"):
             return self.async_abort(reason="matter_unavailable")
-        if status.get("commissioned") and not status.get("window_open"):
-            return self.async_show_menu(
-                step_id="matter",
-                menu_options=["matter_open_window", "matter_done"],
-                description_placeholders={"apps": paired_apps_text(status)},
-            )
-        return await self._show_qr(status)
+        paired = bool(status.get("commissioned") and status.get("fabrics"))
+        return self.async_show_menu(
+            step_id="matter",
+            menu_options={
+                "matter_open_window": "Pair another app" if paired else "Pair an app",
+                "init": "Back",
+            },
+            description_placeholders={"apps": paired_apps_text(status) if paired else "- No app yet"},
+        )
 
     async def async_step_matter_open_window(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         try:
-            await self._hub.client.call("matter/open_window")
-            for _ in range(10):  # the bridge reports the open window within a moment
-                status = await self._hub.client.call("matter/status")
-                if status.get("window_open"):
-                    return await self._show_qr(status)
-                await asyncio.sleep(0.5)
+            status = await self._hub.client.call("matter/status")
+            if status.get("commissioned") and not status.get("window_open"):
+                # Already paired: the code only works again while a pairing window is open.
+                await self._hub.client.call("matter/open_window")
+                for _ in range(10):  # the bridge reports the open window within a moment
+                    await asyncio.sleep(0.5)
+                    status = await self._hub.client.call("matter/status")
+                    if status.get("window_open"):
+                        break
+                else:
+                    return self.async_abort(
+                        reason="matter_failed", description_placeholders={"error": "the pairing window did not open"}
+                    )
         except NetroniError as err:
             return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
-        return self.async_abort(reason="matter_failed", description_placeholders={"error": "the pairing window did not open"})
-
-    async def _show_qr(self, status: dict) -> ConfigFlowResult:
         return self.async_show_form(
             step_id="matter_qr",
             data_schema=vol.Schema({}),
@@ -151,25 +159,33 @@ class NetroniOptionsFlow(OptionsFlow):
         )
 
     async def async_step_matter_qr(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self.async_step_matter_done()
+        return await self.async_step_matter()  # "Done": back to Matter Connections
 
-    async def async_step_matter_done(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_create_entry(data=dict(self.config_entry.options))
-
-    # --- Tunable-white ports ---
+    # --- Configure ports ---
 
     async def async_step_tunable_white(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            self._uid = user_input["mini"]
-            return await self.async_step_ports()
-        options = [
-            SelectOptionDict(value=m["uid"], label=f"{m['name']} ({m['uid']}) · {_pairs_text(m['pairs'])}")
-            for m in self._hub.config.get("minis", [])
-        ]
-        schema = vol.Schema(
-            {vol.Required("mini"): SelectSelector(SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}
-        )
-        return self.async_show_form(step_id="tunable_white", data_schema=schema)
+        options = {
+            f"mini_{index}": f"{mini['name']} ({mini['uid']}) · {_pairs_text(mini['pairs'])}"
+            for index, mini in enumerate(self._hub.config.get("minis", []))
+        }
+        options["init"] = "Back"
+        return self.async_show_menu(step_id="tunable_white", menu_options=options)
+
+    def __getattr__(self, name: str):
+        """Menu entries mini_0, mini_1, ... of "Configure ports": one step per XP-Mini."""
+        prefix = "async_step_mini_"
+        if name.startswith(prefix) and name[len(prefix):].isdigit():
+            index = int(name[len(prefix):])
+
+            async def step(user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+                minis = self._hub.config.get("minis", [])
+                if index >= len(minis):
+                    return self.async_abort(reason="mini_gone")
+                self._uid = minis[index]["uid"]
+                return await self.async_step_ports()
+
+            return step
+        raise AttributeError(name)
 
     async def async_step_ports(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         mini = self._hub.mini(self._uid)
