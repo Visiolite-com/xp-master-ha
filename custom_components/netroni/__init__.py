@@ -82,6 +82,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         if reg_entry.unique_id not in expected:
             ent_reg.async_remove(reg_entry.entity_id)
 
+    # Devices of XP-Minis removed from the XP-Master go too.
+    dev_reg = dr.async_get(hass)
+    known = {hub.master_id} | {mini["uid"] for mini in hub.config.get("minis", [])}
+    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        uids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
+        if uids and not uids & known:
+            dev_reg.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_setup_label_sync(hass, entry, hub))
     return True

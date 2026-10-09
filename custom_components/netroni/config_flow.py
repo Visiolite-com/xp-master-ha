@@ -159,7 +159,9 @@ class NetroniOptionsFlow(OptionsFlow):
         )
 
     async def async_step_matter_qr(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self.async_step_matter()  # "Done": back to Matter Connections
+        # "Done": end the dialog. Home Assistant always shows a final screen; an abort gives a
+        # useful message and a Close button instead of "Options successfully saved".
+        return self.async_abort(reason="matter_done")
 
     # --- Configure ports ---
 
