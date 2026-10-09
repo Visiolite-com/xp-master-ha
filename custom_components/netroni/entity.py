@@ -28,6 +28,7 @@ class NetroniEntity(Entity):
             model="XP-Mini",
             name=mini.get("name") or f"XP-Mini {mini_uid}",
             serial_number=mini_uid,
+            sw_version=mini.get("firmware"),
             via_device_id=hub.master_device_id,
         )
 

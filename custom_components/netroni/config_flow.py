@@ -1,7 +1,6 @@
 """Config flow: manual entry or zeroconf discovery of an XP-Master."""
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import voluptuous as vol
@@ -26,7 +25,7 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import CannotConnect, CommandError, NetroniClient, NetroniError
 from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
-from .matter import paired_apps_text, qr_placeholders
+from .matter import async_open_window, paired_apps_text, qr_placeholders
 
 
 class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -137,19 +136,7 @@ class NetroniOptionsFlow(OptionsFlow):
 
     async def async_step_matter_open_window(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         try:
-            status = await self._hub.client.call("matter/status")
-            if status.get("commissioned") and not status.get("window_open"):
-                # Already paired: the code only works again while a pairing window is open.
-                await self._hub.client.call("matter/open_window")
-                for _ in range(10):  # the bridge reports the open window within a moment
-                    await asyncio.sleep(0.5)
-                    status = await self._hub.client.call("matter/status")
-                    if status.get("window_open"):
-                        break
-                else:
-                    return self.async_abort(
-                        reason="matter_failed", description_placeholders={"error": "the pairing window did not open"}
-                    )
+            status = await async_open_window(self._hub)
         except NetroniError as err:
             return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
         return self.async_show_form(

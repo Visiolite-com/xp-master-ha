@@ -17,7 +17,8 @@ from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
-OFFLINE_ISSUE = "mini_offline_"  # Repairs issue id prefix, followed by the XP-Mini UID
+OFFLINE_ISSUE = "mini_offline_"
+ALL_MINIS = "*"  # async_add_identify_listener key: every XP-Mini of this XP-Master  # Repairs issue id prefix, followed by the XP-Mini UID
 
 
 class NetroniHub:
@@ -141,7 +142,8 @@ class NetroniHub:
             from .identify import async_notify_port_identified  # avoid an import cycle
 
             async_notify_port_identified(self.hass, self, data)
-            for listener in list(self._identify_listeners.get(data.get("uid"), ())):
+            listeners = self._identify_listeners.get(data.get("uid"), set()) | self._identify_listeners.get(ALL_MINIS, set())
+            for listener in list(listeners):
                 listener(data)
 
     @callback

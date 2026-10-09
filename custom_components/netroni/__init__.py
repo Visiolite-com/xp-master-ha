@@ -10,12 +10,23 @@ from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, Se
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .client import CannotConnect, CommandError, NetroniError
-from .const import ATTR_PORT, DOMAIN, MANUFACTURER, PORTS_PER_MINI, SERVICE_PAIR, SERVICE_UNPAIR
+from .const import (
+    ATTR_PORT,
+    DOMAIN,
+    MANUFACTURER,
+    PORTS_PER_MINI,
+    SERVICE_PAIR,
+    SERVICE_UNPAIR,
+    SIGNAL_HUBS_CHANGED,
+)
 from .hub import NetroniHub
+from .panel import async_setup_panel
 from .sync import async_setup_label_sync
+from .websocket import async_setup_websocket
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT]
 
@@ -44,6 +55,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.services.async_register(DOMAIN, SERVICE_PAIR, make_handler("mini/pair"), schema=PORT_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_UNPAIR, make_handler("mini/unpair"), schema=PORT_SCHEMA)
+    async_setup_websocket(hass)
+    await async_setup_panel(hass)
     return True
 
 
@@ -80,6 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_setup_label_sync(hass, entry, hub))
+    async_dispatcher_send(hass, SIGNAL_HUBS_CHANGED)
     return True
 
 
@@ -87,4 +101,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> 
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         await entry.runtime_data.async_stop()
+        async_dispatcher_send(hass, SIGNAL_HUBS_CHANGED)
     return unloaded

@@ -5,7 +5,32 @@ us with "matter/status"; Home Assistant itself is not part of the Matter connect
 """
 from __future__ import annotations
 
+import asyncio
+
 import segno
+
+from .client import NetroniError
+from .hub import NetroniHub
+
+
+async def async_open_window(hub: NetroniHub) -> dict:
+    """Make the QR/setup code work (again) and return the status once it does.
+
+    Unpaired, the bridge accepts the code anyway. Once paired, it only does while a pairing
+    window is open (15 minutes).
+    """
+    status = await hub.client.call("matter/status")
+    if not status.get("connected"):
+        raise NetroniError("the Matter bridge of the XP-Master is not running")
+    if not status.get("commissioned") or status.get("window_open"):
+        return status
+    await hub.client.call("matter/open_window")
+    for _ in range(10):  # the bridge reports the open window within a moment
+        await asyncio.sleep(0.5)
+        status = await hub.client.call("matter/status")
+        if status.get("window_open"):
+            return status
+    raise NetroniError("the pairing window did not open")
 
 
 def paired_apps_text(status: dict) -> str:
