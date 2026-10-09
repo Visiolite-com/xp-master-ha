@@ -169,6 +169,11 @@ class NetroniPanel extends HTMLElement {
       case "more-info":
         if (d.entity) this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.entity }, bubbles: true, composed: true }));
         break;
+      case "toggle":
+        this._hass
+          .callService("light", "toggle", { entity_id: d.entity })
+          .catch((err) => this._toast(err.message || String(err)));
+        break;
       case "identify":
         this._identify(d.entry, d.uid, Number(d.port));
         break;
@@ -465,8 +470,9 @@ class NetroniPanel extends HTMLElement {
       : "";
     return `
       <div class="light ${on ? "on" : ""} ${unavailable ? "unavailable" : ""} ${marked ? "marked" : ""}">
-        <button class="lamp" data-action="more-info" data-entity="${esc(light.entity_id)}" title="Control"><ha-icon icon="${icon}"></ha-icon></button>
-        <div class="light-text" data-action="more-info" data-entity="${esc(light.entity_id)}">
+        <button class="lamp" data-action="toggle" data-entity="${esc(light.entity_id)}" ${unavailable ? "disabled" : ""}
+          title="${on ? "Turn off" : "Turn on"}"><ha-icon icon="${icon}"></ha-icon></button>
+        <div class="light-text" data-action="more-info" data-entity="${esc(light.entity_id)}" title="Brightness and colour">
           <div class="light-name ${light.name ? "" : "unnamed"}">${esc(light.name || light.default_name)}</div>
           <div class="light-sub">${tagOf(light)} · ${esc(light.area || "No area")} · ${state}</div>
         </div>
@@ -660,7 +666,7 @@ const STYLE = `
   .lamp { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center;
     background: rgba(127, 127, 127, .12); color: var(--secondary-text-color); }
   .light.on .lamp { color: var(--lamp-on); background: rgba(255, 152, 0, .16); }
-  .light.unavailable .lamp { opacity: .45; }
+  .light.unavailable .lamp { opacity: .45; cursor: default; }
   .light-text { flex: 1; min-width: 0; cursor: pointer; }
   .light-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .light-name.unnamed { color: var(--secondary-text-color); font-style: italic; }
@@ -677,7 +683,8 @@ const STYLE = `
   .icon-btn { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; color: var(--secondary-text-color);
     cursor: pointer; display: grid; place-items: center; }
   .icon-btn.small { width: 32px; height: 32px; }
-  .icon-btn:hover:not(:disabled), .lamp:hover { background: rgba(127, 127, 127, .16); }
+  .icon-btn:hover:not(:disabled), .lamp:hover:not(:disabled) { background: rgba(127, 127, 127, .24); }
+  .light.on .lamp:hover:not(:disabled) { background: rgba(255, 152, 0, .28); }
   .icon-btn:disabled { opacity: .35; cursor: default; }
   .toolbar .icon-btn { color: inherit; }
   .btn { font: inherit; font-weight: 500; border: 0; border-radius: 20px; padding: 9px 18px; cursor: pointer; white-space: nowrap;
