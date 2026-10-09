@@ -123,5 +123,24 @@
         }
       }
     }
+  },
+  "issues": {
+    "mini_offline": {
+      "title": "{name} is offline",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{name} is offline",
+            "description": "{name} ({uid}) no longer answers on the Visio-Link, so its lights can't be controlled.\n\nCheck its Visio-Link cable and power supply; this message disappears as soon as it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its lights, names and DMX block are deleted. If it is connected again later, it is added as a new XP-Mini.",
+            "submit": "Remove XP-Mini"
+          }
+        },
+        "abort": {
+          "not_loaded": "The XP-Master is not connected. Try again when it is online.",
+          "resolved": "This XP-Mini is back online or already removed.",
+          "remove_failed": "The XP-Master could not remove it: {error}"
+        }
+      }
+    }
   }
 }

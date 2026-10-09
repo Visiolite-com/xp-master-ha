@@ -8,7 +8,7 @@ from collections.abc import Callable
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import CannotConnect, CommandError, NetroniClient
@@ -17,6 +17,7 @@ from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
+OFFLINE_ISSUE = "mini_offline_"  # Repairs issue id prefix, followed by the XP-Mini UID
 
 
 class NetroniHub:
@@ -76,6 +77,7 @@ class NetroniHub:
         self.available = True
         if changed:  # e.g. an XP-Mini added while we were disconnected
             self._apply_structure()
+        self.async_update_offline_issues()
         self._notify()
 
     # --- lookups -----------------------------------------------------------
@@ -132,6 +134,7 @@ class NetroniHub:
             mini = self.mini(data.get("uid", ""))
             if mini is not None:
                 mini["online"] = bool(data.get("online"))
+                self.async_update_offline_issues()
                 self._notify()
             # An XP-Mini new to the configuration arrives with config_changed.
         elif event == "port_identified":
@@ -200,8 +203,31 @@ class NetroniHub:
         Activity log shows as false "Pressed" / "Event detected" entries.
         """
         self.async_remove_stale()
+        self.async_update_offline_issues()
         for listener in list(self._structure_listeners):
             listener()
+
+    @callback
+    def async_update_offline_issues(self) -> None:
+        """A Repairs issue per offline XP-Mini; it goes away when the XP-Mini is back or removed."""
+        issue_reg = ir.async_get(self.hass)
+        offline = {mini["uid"]: mini for mini in self.config.get("minis", []) if not mini.get("online", True)}
+        for domain, issue_id in list(issue_reg.issues):
+            if domain == DOMAIN and issue_id.startswith(OFFLINE_ISSUE):
+                if issue_id.removeprefix(OFFLINE_ISSUE) not in offline:
+                    ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        for uid, mini in offline.items():
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                OFFLINE_ISSUE + uid,
+                is_fixable=True,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="mini_offline",
+                translation_placeholders={"name": mini["name"], "uid": uid},
+                data={"entry_id": self.entry.entry_id, "uid": uid},
+            )
 
     @callback
     def async_remove_stale(self) -> None:
