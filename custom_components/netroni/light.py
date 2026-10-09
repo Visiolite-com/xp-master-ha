@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import NetroniConfigEntry
 from .client import NetroniError
 from .const import KELVIN_COOL, KELVIN_WARM
-from .entity import NetroniEntity
+from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
 from .sync import async_push_label, async_restore_area
 
@@ -27,7 +27,12 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     hub = entry.runtime_data
-    async_add_entities(NetroniLight(hub, light) for light in hub.config.get("lights", []))
+    async_track(
+        entry,
+        hub,
+        async_add_entities,
+        lambda config: {l["id"]: (lambda l=l: NetroniLight(hub, l)) for l in config.get("lights", [])},
+    )
 
 
 class NetroniLight(NetroniEntity, LightEntity):

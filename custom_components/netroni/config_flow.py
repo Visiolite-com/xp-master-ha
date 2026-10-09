@@ -167,7 +167,8 @@ class NetroniOptionsFlow(OptionsFlow):
 
     async def async_step_tunable_white(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         options = {
-            f"mini_{index}": f"{mini['name']} ({mini['uid']}) · {_pairs_text(mini['pairs'])}"
+            f"mini_{index}": f"{mini['name']} ({mini['uid']}) · "
+            + (_pairs_text(mini["pairs"]) if mini.get("online", True) else "offline")
             for index, mini in enumerate(self._hub.config.get("minis", []))
         }
         options["init"] = "Back"
@@ -220,8 +221,8 @@ class NetroniOptionsFlow(OptionsFlow):
         if mini is None:
             return self.async_abort(reason="mini_gone")
         if user_input is not None:
-            # One call for the whole change: the Master applies it at once, so a reload of
-            # this integration (triggered by the change) can't cut a series of calls short.
+            # One call for the whole change: the Master applies it at once and announces one
+            # configuration change.
             wanted = sorted((set(mini["pairs"]) | set(self._pair)) - set(self._unpair))
             try:
                 await self._hub.client.call("mini/set_pairs", uid=self._uid, pairs=wanted)

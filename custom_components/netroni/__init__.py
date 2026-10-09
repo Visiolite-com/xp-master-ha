@@ -17,7 +17,7 @@ from .const import ATTR_PORT, DOMAIN, MANUFACTURER, PORTS_PER_MINI, SERVICE_PAIR
 from .hub import NetroniHub
 from .sync import async_setup_label_sync
 
-PLATFORMS = [Platform.BUTTON, Platform.EVENT, Platform.LIGHT]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -74,21 +74,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
     )
     hub.master_device_id = master_device.id
 
-    # Entities that no longer match the configuration (lights of a port that was paired or
-    # unpaired, or from an older integration version) are removed, so none linger unavailable.
-    ent_reg = er.async_get(hass)
-    expected = hub.expected_unique_ids()
-    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if reg_entry.unique_id not in expected:
-            ent_reg.async_remove(reg_entry.entity_id)
-
-    # Devices of XP-Minis removed from the XP-Master go too.
-    dev_reg = dr.async_get(hass)
-    known = {hub.master_id} | {mini["uid"] for mini in hub.config.get("minis", [])}
-    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-        uids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
-        if uids and not uids & known:
-            dev_reg.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
+    # Entities and devices that no longer match the configuration (lights of a port that was
+    # paired or unpaired, removed XP-Minis, older integration versions) are removed.
+    hub.async_remove_stale()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_setup_label_sync(hass, entry, hub))

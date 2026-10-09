@@ -87,6 +87,11 @@
           }
         }
       }
+    },
+    "binary_sensor": {
+      "connection": {
+        "name": "Connection"
+      }
     }
   },
   "services": {

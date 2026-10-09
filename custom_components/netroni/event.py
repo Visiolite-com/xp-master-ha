@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
 from .const import DOMAIN
-from .entity import NetroniEntity
+from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
 from .identify import port_label
 
@@ -25,7 +25,12 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     hub = entry.runtime_data
-    async_add_entities(PortIdentifiedEvent(hub, mini["uid"]) for mini in hub.config.get("minis", []))
+    async_track(
+        entry,
+        hub,
+        async_add_entities,
+        lambda config: {m["uid"]: (lambda uid=m["uid"]: PortIdentifiedEvent(hub, uid)) for m in config.get("minis", [])},
+    )
 
 
 class PortIdentifiedEvent(NetroniEntity, EventEntity):

@@ -1,8 +1,13 @@
 """Base entity: one device per XP-Mini, linked to the XP-Master device."""
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN, MANUFACTURER
 from .hub import NetroniHub
@@ -33,3 +38,30 @@ class NetroniEntity(Entity):
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
+
+
+@callback
+def async_track(
+    entry: ConfigEntry,
+    hub: NetroniHub,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    build: Callable[[dict], dict[str, Callable[[], Entity]]],
+) -> None:
+    """Add a platform's entities now, and those of new lights / XP-Minis as they appear.
+
+    build(config) returns {key: factory} for every entity the configuration should have; only
+    keys not added before are created. Removed ones are deleted by the hub (async_remove_stale).
+    """
+    added: set[str] = set()
+
+    @callback
+    def sync() -> None:
+        wanted = build(hub.config)
+        added.intersection_update(wanted)  # forget removed ones, so they can come back
+        new = [factory() for key, factory in wanted.items() if key not in added]
+        added.update(wanted)
+        if new:
+            async_add_entities(new)
+
+    sync()
+    entry.async_on_unload(hub.async_add_structure_listener(sync))

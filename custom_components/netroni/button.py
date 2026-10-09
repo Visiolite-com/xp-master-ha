@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import NetroniConfigEntry
 from .client import CommandError, NetroniError
 from .const import PORTS_PER_MINI
-from .entity import NetroniEntity
+from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
 
 
@@ -20,10 +20,15 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     hub = entry.runtime_data
-    async_add_entities(
-        IdentifyPortButton(hub, mini["uid"], port)
-        for mini in hub.config.get("minis", [])
-        for port in range(1, PORTS_PER_MINI + 1)
+    async_track(
+        entry,
+        hub,
+        async_add_entities,
+        lambda config: {
+            f"{m['uid']}/{port}": (lambda uid=m["uid"], port=port: IdentifyPortButton(hub, uid, port))
+            for m in config.get("minis", [])
+            for port in range(1, PORTS_PER_MINI + 1)
+        },
     )
 
 

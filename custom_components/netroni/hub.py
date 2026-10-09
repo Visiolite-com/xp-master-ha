@@ -8,16 +8,15 @@ from collections.abc import Callable
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
 
 from .client import CannotConnect, CommandError, NetroniClient
-from .const import API_VERSION, PORTS_PER_MINI
+from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 
 _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
-RELOAD_DELAY = 2.0
 
 
 class NetroniHub:
@@ -41,7 +40,8 @@ class NetroniHub:
         # Open port-identification notifications: notification id -> light entity ids.
         self.identify_notifications: dict[str, set[str]] = {}
         self._stopping = False
-        self._reload_cancel: Callable[[], None] | None = None
+        # Platforms add entities for new lights / XP-Minis through these (see entity.async_track).
+        self._structure_listeners: set[Callable[[], None]] = set()
 
     @property
     def master_id(self) -> str:
@@ -54,9 +54,6 @@ class NetroniHub:
 
     async def async_stop(self) -> None:
         self._stopping = True
-        if self._reload_cancel is not None:
-            self._reload_cancel()
-            self._reload_cancel = None
         await self.client.close()
 
     async def _connect_and_sync(self) -> None:
@@ -74,12 +71,12 @@ class NetroniHub:
         except (CannotConnect, CommandError):
             await self.client.close()
             raise
-        reload_needed = bool(self.config) and _structure(config) != _structure(self.config)
+        changed = bool(self.config) and _structure(config) != _structure(self.config)
         self.master, self.config, self.states = hello["master"], config, states
         self.available = True
+        if changed:  # e.g. an XP-Mini added while we were disconnected
+            self._apply_structure()
         self._notify()
-        if reload_needed:
-            self._schedule_reload()
 
     # --- lookups -----------------------------------------------------------
 
@@ -105,6 +102,7 @@ class NetroniHub:
                 f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
             )
             ids.add(f"{prefix}{mini['uid']}/port_identified")
+            ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 
     # --- listeners ---------------------------------------------------------
@@ -135,7 +133,7 @@ class NetroniHub:
             if mini is not None:
                 mini["online"] = bool(data.get("online"))
                 self._notify()
-            # An XP-Mini new to the configuration arrives with config_changed and a reload.
+            # An XP-Mini new to the configuration arrives with config_changed.
         elif event == "port_identified":
             from .identify import async_notify_port_identified  # avoid an import cycle
 
@@ -157,12 +155,11 @@ class NetroniHub:
         except (CannotConnect, CommandError) as err:
             _LOGGER.debug("config refresh failed: %s", err)
             return
-        reload_needed = _structure(config) != _structure(self.config)
+        changed = _structure(config) != _structure(self.config)
         self.config = config
-        if reload_needed:
-            self._schedule_reload()
-        else:
-            self._notify()
+        if changed:
+            self._apply_structure()
+        self._notify()
 
     @callback
     def _on_disconnect(self) -> None:
@@ -188,22 +185,38 @@ class NetroniHub:
                 _LOGGER.info("reconnected to XP-Master at %s", self.client.url)
                 return
 
-    @callback
-    def _schedule_reload(self) -> None:
-        """Lights or XP-Minis were added or removed: rebuild the entities.
+    # --- entities follow the configuration ----------------------------------
 
-        Waits RELOAD_DELAY (restarting on each new request), so a reload never cuts off a
-        command that is still running on this connection, e.g. from the options dialog.
+    @callback
+    def async_add_structure_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._structure_listeners.add(listener)
+        return lambda: self._structure_listeners.discard(listener)
+
+    @callback
+    def _apply_structure(self) -> None:
+        """XP-Minis or lights were added or removed: change only the entities concerned.
+
+        No reload of the integration: a reload briefly makes every entity unavailable, which the
+        Activity log shows as false "Pressed" / "Event detected" entries.
         """
-        if self._reload_cancel is not None:
-            self._reload_cancel()
-        self._reload_cancel = async_call_later(self.hass, RELOAD_DELAY, self._do_reload)
+        self.async_remove_stale()
+        for listener in list(self._structure_listeners):
+            listener()
 
     @callback
-    def _do_reload(self, _now) -> None:
-        self._reload_cancel = None
-        if not self._stopping:
-            self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+    def async_remove_stale(self) -> None:
+        """Remove entities and XP-Mini devices that the configuration no longer has."""
+        ent_reg = er.async_get(self.hass)
+        expected = self.expected_unique_ids()
+        for reg_entry in er.async_entries_for_config_entry(ent_reg, self.entry.entry_id):
+            if reg_entry.unique_id not in expected:
+                ent_reg.async_remove(reg_entry.entity_id)
+        dev_reg = dr.async_get(self.hass)
+        known = {self.master_id} | {mini["uid"] for mini in self.config.get("minis", [])}
+        for device in dr.async_entries_for_config_entry(dev_reg, self.entry.entry_id):
+            uids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
+            if uids and not uids & known:
+                dev_reg.async_update_device(device.id, remove_config_entry_id=self.entry.entry_id)
 
 
 def _structure(config: dict) -> tuple:
