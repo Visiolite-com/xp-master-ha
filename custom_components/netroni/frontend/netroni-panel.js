@@ -412,7 +412,7 @@ class NetroniPanel extends HTMLElement {
     return `
       <section class="card mini ${mini.online ? "" : "offline"}">
         <div class="card-head">
-          <ha-icon class="head-icon" icon="mdi:led-strip-variant"></ha-icon>
+          <ha-icon class="head-icon mini-icon" icon="netroni:xp-mini"></ha-icon>
           <div class="grow">
             <h3>${esc(mini.name)}</h3>
             <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
@@ -625,6 +625,7 @@ const STYLE = `
   .card.offline { border-color: var(--warn); }
   .card-head { display: flex; align-items: center; gap: 12px; }
   .head-icon { --mdc-icon-size: 28px; color: var(--primary-color); flex: none; }
+  .head-icon.mini-icon { --mdc-icon-size: 40px; margin: -6px -4px; } /* tall drawing: larger box */
   .grow { flex: 1; min-width: 0; }
   h2, h3, h4 { margin: 0; font-weight: 500; }
   h2 { font-size: 20px; } h3 { font-size: 17px; } h4 { font-size: 14px; margin: 16px 0 8px; }
