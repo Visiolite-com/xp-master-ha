@@ -579,7 +579,7 @@ class NetroniPanel extends HTMLElement {
       const mini = this._mini(d.entry, d.uid);
       title = `Remove ${esc(mini?.name || d.uid)}?`;
       body = `<p>${esc(mini?.name || d.uid)} (${esc(d.uid)}) is removed from the XP-Master: its lights, names and DMX block are deleted.</p>
-        <p class="sub">If it is connected again later, it is added as a new XP-Mini.</p>`;
+        <p class="sub">If it is connected again later, it will be added as a new XP-Mini.</p>`;
       action = `<button class="btn danger" data-action="confirm-remove" ${this._busy ? "disabled" : ""}>Remove XP-Mini</button>`;
     }
     host.innerHTML = `
