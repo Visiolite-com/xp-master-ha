@@ -403,7 +403,7 @@ class NetroniPanel extends HTMLElement {
       ? this._banner(
           "warn",
           "mdi:lan-disconnect",
-          `<b>${esc(mini.name)} is offline.</b> It no longer answers on the Visio-Link, so its lights can't be controlled. Check its cable and power supply.`,
+          `<b>${esc(mini.name)} is offline.</b> It no longer answers so its lights can't be controlled. Check its cable and power supply.`,
           this._admin
             ? `<button class="btn danger" data-action="remove" data-entry="${master.entry_id}" data-uid="${esc(mini.uid)}">Remove XP-Mini</button>`
             : ""
