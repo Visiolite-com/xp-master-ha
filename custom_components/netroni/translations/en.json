@@ -29,6 +29,13 @@
   "options": {
     "step": {
       "init": {
+        "title": "XP-Master options",
+        "menu_options": {
+          "tunable_white": "Tunable-white ports",
+          "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home"
+        }
+      },
+      "tunable_white": {
         "title": "Tunable-white ports",
         "description": "Pick the XP-Mini to configure. Use its Identify Port buttons to find the fixtures if needed.",
         "data": {
@@ -45,13 +52,27 @@
       "confirm": {
         "title": "Change the lights of {mini}?",
         "description": "{changes}\n\nThe lights that are replaced lose their names and areas, and any automations, scenes or dashboards that use them must be updated. Other ports are not affected.\n\nSubmit to apply."
+      },
+      "matter": {
+        "title": "Matter",
+        "description": "The XP-Master is paired with:\n\n{apps}\n\nTo add another app, open a pairing window; this shows a QR code to scan in the new app.",
+        "menu_options": {
+          "matter_open_window": "Pair another app",
+          "matter_done": "Close"
+        }
+      },
+      "matter_qr": {
+        "title": "Pair with a Matter app",
+        "description": "In SmartThings, Google Home, Alexa or Apple Home, choose to add a Matter device and scan this code:\n\n![Matter pairing QR code]({qr})\n\nOr enter the setup code **{code}**.\n\n{window}"
       }
     },
     "abort": {
       "not_loaded": "The XP-Master is not connected. Try again when it is online.",
       "mini_gone": "That XP-Mini is no longer part of this XP-Master.",
       "no_changes": "Nothing was changed.",
-      "set_failed": "The XP-Master rejected the change: {error}"
+      "set_failed": "The XP-Master rejected the change: {error}",
+      "matter_unavailable": "The Matter bridge of the XP-Master is not running.",
+      "matter_failed": "Matter pairing failed: {error}"
     }
   },
   "entity": {

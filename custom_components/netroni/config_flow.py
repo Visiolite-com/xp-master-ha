@@ -1,6 +1,7 @@
 """Config flow: manual entry or zeroconf discovery of an XP-Master."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import voluptuous as vol
@@ -25,6 +26,7 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import CannotConnect, CommandError, NetroniClient, NetroniError
 from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
+from .matter import paired_apps_text, qr_placeholders
 
 
 class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -96,7 +98,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class NetroniOptionsFlow(OptionsFlow):
-    """Configure: choose which of an XP-Mini's ports are tunable-white lights."""
+    """Configure: tunable-white ports per XP-Mini, and pairing with Matter apps."""
 
     def __init__(self) -> None:
         self._uid = ""
@@ -110,6 +112,53 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
+        return self.async_show_menu(step_id="init", menu_options=["tunable_white", "matter"])
+
+    # --- Matter: pair the XP-Master with SmartThings, Google Home, Alexa or Apple Home ---
+
+    async def async_step_matter(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        try:
+            status = await self._hub.client.call("matter/status")
+        except NetroniError as err:
+            return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
+        if not status.get("connected"):
+            return self.async_abort(reason="matter_unavailable")
+        if status.get("commissioned") and not status.get("window_open"):
+            return self.async_show_menu(
+                step_id="matter",
+                menu_options=["matter_open_window", "matter_done"],
+                description_placeholders={"apps": paired_apps_text(status)},
+            )
+        return await self._show_qr(status)
+
+    async def async_step_matter_open_window(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        try:
+            await self._hub.client.call("matter/open_window")
+            for _ in range(10):  # the bridge reports the open window within a moment
+                status = await self._hub.client.call("matter/status")
+                if status.get("window_open"):
+                    return await self._show_qr(status)
+                await asyncio.sleep(0.5)
+        except NetroniError as err:
+            return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
+        return self.async_abort(reason="matter_failed", description_placeholders={"error": "the pairing window did not open"})
+
+    async def _show_qr(self, status: dict) -> ConfigFlowResult:
+        return self.async_show_form(
+            step_id="matter_qr",
+            data_schema=vol.Schema({}),
+            description_placeholders=await self.hass.async_add_executor_job(qr_placeholders, status),
+        )
+
+    async def async_step_matter_qr(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_matter_done()
+
+    async def async_step_matter_done(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_create_entry(data=dict(self.config_entry.options))
+
+    # --- Tunable-white ports ---
+
+    async def async_step_tunable_white(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._uid = user_input["mini"]
             return await self.async_step_ports()
@@ -120,7 +169,7 @@ class NetroniOptionsFlow(OptionsFlow):
         schema = vol.Schema(
             {vol.Required("mini"): SelectSelector(SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="tunable_white", data_schema=schema)
 
     async def async_step_ports(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         mini = self._hub.mini(self._uid)
