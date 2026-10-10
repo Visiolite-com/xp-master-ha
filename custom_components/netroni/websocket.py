@@ -268,8 +268,8 @@ async def ws_remove_mini(hass: HomeAssistant, connection: websocket_api.ActiveCo
 
 
 async def _with_qr(hass: HomeAssistant, status: dict) -> dict:
-    """Add the QR image and setup code while they can be used to pair."""
-    if status.get("connected") and (not status.get("commissioned") or status.get("window_open")):
+    """Add the QR image and setup code while a pairing window is open."""
+    if status.get("connected") and status.get("window_open"):
         status = {**status, **await hass.async_add_executor_job(qr_placeholders, status)}
     status.pop("qr_code", None)  # the panel shows the image
     status["manual_code"] = format_manual_code(status["manual_code"]) if "manual_code" in status else None

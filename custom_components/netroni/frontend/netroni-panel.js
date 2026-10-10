@@ -526,10 +526,8 @@ class NetroniPanel extends HTMLElement {
     let html = `<h4>Paired apps</h4>${paired ? `<div class="apps">${apps.join("")}</div>` : `<div class="sub pad">Not paired with any app yet.</div>`}`;
 
     if (status.qr) {
-      const until = paired
-        ? `<div class="sub" id="countdown-${master.entry_id}">The code works for 3 minutes.</div>`
-        : `<div class="sub">The code works until an app has paired.</div>`;
-      const cancel = paired && this._admin
+      const until = `<div class="sub" id="countdown-${master.entry_id}">The code works for 3 minutes.</div>`;
+      const cancel = this._admin
         ? `<div class="actions"><button class="btn secondary" data-action="cancel-pairing" data-entry="${master.entry_id}" ${status.closing ? "disabled" : ""}>${status.closing ? "Cancelling…" : "Cancel"}</button></div>`
         : "";
       html += `
@@ -546,9 +544,9 @@ class NetroniPanel extends HTMLElement {
         </div>`;
     } else if (this._admin) {
       html += `<div class="actions"><button class="btn" data-action="pair-app" data-entry="${master.entry_id}" ${status.opening ? "disabled" : ""}>
-        ${status.opening ? "Opening…" : "Pair another app"}</button></div>`;
+        ${status.opening ? "Opening…" : paired ? "Pair another app" : "Pair an app"}</button></div>`;
     } else {
-      html += `<div class="sub pad">An administrator can pair another app.</div>`;
+      html += `<div class="sub pad">An administrator can pair ${paired ? "another" : "an"} app.</div>`;
     }
     return html;
   }

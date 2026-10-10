@@ -14,15 +14,14 @@ from .hub import NetroniHub
 
 
 async def async_open_window(hub: NetroniHub) -> dict:
-    """Make the QR/setup code work (again) and return the status once it does.
+    """Open a 3-minute pairing window (paired or not) and return the status once it is open.
 
-    Unpaired, the bridge accepts the code anyway. Once paired, it only does while a pairing
-    window is open (3 minutes).
+    The QR/setup code is only shown, and accepted, while such a window is open.
     """
     status = await hub.client.call("matter/status")
     if not status.get("connected"):
         raise NetroniError("the Matter bridge of the XP-Master is not running")
-    if not status.get("commissioned") or status.get("window_open"):
+    if status.get("window_open"):
         return status
     await hub.client.call("matter/open_window")
     for _ in range(10):  # the bridge reports the open window within a moment
@@ -44,11 +43,7 @@ def qr_placeholders(status: dict) -> dict[str, str]:
     return {
         "qr": qr.png_data_uri(scale=6, border=4, dark="#000000", light="#ffffff"),
         "code": format_manual_code(status["manual_code"]),
-        "window": (
-            "The code works for 3 minutes; open this page again if it runs out."
-            if status.get("commissioned")
-            else "Every XP-Mini light appears as its own device, named as in Home Assistant."
-        ),
+        "window": "The code works for 3 minutes; open this page again if it runs out.",
     }
 
 
