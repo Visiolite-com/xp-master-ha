@@ -67,7 +67,7 @@
       "set_failed": "The XP-Master rejected the change: {error}",
       "matter_unavailable": "The Matter bridge of the XP-Master is not running.",
       "matter_failed": "Matter pairing failed: {error}",
-      "matter_done": "The new app can pair with the XP-Master for 15 minutes, using the QR code or the setup code."
+      "matter_done": "The new app can pair with the XP-Master for 3 minutes, using the QR code or the setup code."
     }
   },
   "entity": {

@@ -17,7 +17,7 @@ async def async_open_window(hub: NetroniHub) -> dict:
     """Make the QR/setup code work (again) and return the status once it does.
 
     Unpaired, the bridge accepts the code anyway. Once paired, it only does while a pairing
-    window is open (15 minutes).
+    window is open (3 minutes).
     """
     status = await hub.client.call("matter/status")
     if not status.get("connected"):
@@ -45,7 +45,7 @@ def qr_placeholders(status: dict) -> dict[str, str]:
         "qr": qr.png_data_uri(scale=6, border=4, dark="#000000", light="#ffffff"),
         "code": format_manual_code(status["manual_code"]),
         "window": (
-            "The code works for 15 minutes; open this page again if it runs out."
+            "The code works for 3 minutes; open this page again if it runs out."
             if status.get("commissioned")
             else "Every XP-Mini light appears as its own device, named as in Home Assistant."
         ),

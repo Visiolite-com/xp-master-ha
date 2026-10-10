@@ -6,7 +6,6 @@
 // WebSocket commands enforce it, the panel only hides the controls).
 
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
-const PAIRING_WINDOW_S = 15 * 60;
 const MATTER_POLL_S = 10;
 
 const APP_ICONS = {
@@ -32,7 +31,7 @@ class NetroniPanel extends HTMLElement {
     this._dialog = null; // the open dialog: {kind, ...}
     this._identified = new Map(); // "entry|uid|port" -> {lightIds, until}
     this._matter = {}; // entry_id -> status from netroni/matter_status
-    this._windowOpenedAt = {}; // entry_id -> ms, when this panel opened a pairing window
+    this._windowClosesAt = {}; // entry_id -> ms, when the open pairing window closes (from the bridge)
     this._busy = false;
     this._stateSig = "";
     this._ticks = 0;
@@ -197,6 +196,9 @@ class NetroniPanel extends HTMLElement {
       case "pair-app":
         this._openWindow(d.entry);
         break;
+      case "cancel-pairing":
+        this._closeWindow(d.entry);
+        break;
       case "scrim":
         if (ev.target === el) this._closeDialog();
         break;
@@ -278,8 +280,7 @@ class NetroniPanel extends HTMLElement {
     for (const master of this._data?.masters || []) {
       try {
         const status = await this._hass.callWS({ type: "netroni/matter_status", entry_id: master.entry_id });
-        if (!status.window_open) delete this._windowOpenedAt[master.entry_id];
-        this._matter[master.entry_id] = status;
+        this._setMatter(master.entry_id, status);
       } catch (err) {
         this._matter[master.entry_id] = { error: err.message || String(err) };
       }
@@ -291,24 +292,40 @@ class NetroniPanel extends HTMLElement {
     this._matter[entry] = { ...this._matter[entry], opening: true };
     this._renderMain();
     try {
-      const status = await this._call({ type: "netroni/matter_open_window", entry_id: entry });
-      if (status.commissioned) this._windowOpenedAt[entry] = Date.now();
-      this._matter[entry] = status;
+      this._setMatter(entry, await this._call({ type: "netroni/matter_open_window", entry_id: entry }));
     } catch {
       this._matter[entry] = { ...this._matter[entry], opening: false };
     }
     this._renderMain();
   }
 
-  _updateCountdowns() {
-    for (const [entry, opened] of Object.entries(this._windowOpenedAt)) {
-      const el = this.shadowRoot.getElementById(`countdown-${entry}`);
-      if (!el) continue;
-      const left = Math.max(0, PAIRING_WINDOW_S - Math.floor((Date.now() - opened) / 1000));
-      el.textContent = left
-        ? `The code works for another ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.`
-        : "The pairing window has closed.";
+  async _closeWindow(entry) {
+    this._matter[entry] = { ...this._matter[entry], closing: true };
+    this._renderMain();
+    try {
+      await this._call({ type: "netroni/matter_close_window", entry_id: entry });
+    } catch {}
+    await this._refreshMatter();
+  }
+
+  _setMatter(entry, status) {
+    this._matter[entry] = status;
+    if (status.window_open && status.window_seconds_left != null) {
+      this._windowClosesAt[entry] = Date.now() + status.window_seconds_left * 1000;
+    } else {
+      delete this._windowClosesAt[entry];
     }
+  }
+
+  _updateCountdowns() {
+    let closed = false;
+    for (const [entry, closesAt] of Object.entries(this._windowClosesAt)) {
+      const left = Math.max(0, Math.round((closesAt - Date.now()) / 1000));
+      const el = this.shadowRoot.getElementById(`countdown-${entry}`);
+      if (el) el.textContent = left ? `The code works for another ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.` : "The pairing window is closing…";
+      if (!left) closed = true;
+    }
+    if (closed && this._ticks % 2 === 0) this._refreshMatter(); // pick up the closed window quickly
   }
 
   // --- lookups ------------------------------------------------------------------------------
@@ -510,8 +527,11 @@ class NetroniPanel extends HTMLElement {
 
     if (status.qr) {
       const until = paired
-        ? `<div class="sub" id="countdown-${master.entry_id}">The code works for up to 15 minutes.</div>`
+        ? `<div class="sub" id="countdown-${master.entry_id}">The code works for 3 minutes.</div>`
         : `<div class="sub">The code works until an app has paired.</div>`;
+      const cancel = paired && this._admin
+        ? `<div class="actions"><button class="btn secondary" data-action="cancel-pairing" data-entry="${master.entry_id}" ${status.closing ? "disabled" : ""}>${status.closing ? "Cancelling…" : "Cancel"}</button></div>`
+        : "";
       html += `
         <div class="qr-box">
           <img class="qr" src="${status.qr}" alt="Matter pairing QR code">
@@ -521,6 +541,7 @@ class NetroniPanel extends HTMLElement {
             <p>Or enter the setup code <b class="code">${esc(status.code || status.manual_code)}</b></p>
             ${until}
             <p class="sub">Every XP-Mini light appears as its own device, named as in Home Assistant.</p>
+            ${cancel}
           </div>
         </div>`;
     } else if (this._admin) {

@@ -38,6 +38,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_remove_mini,
         ws_matter_status,
         ws_matter_open_window,
+        ws_matter_close_window,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -304,3 +305,20 @@ async def ws_matter_open_window(
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"], await _with_qr(hass, status))
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/matter_close_window", vol.Required("entry_id"): str}
+)
+@websocket_api.async_response
+async def ws_matter_close_window(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    """Cancel pairing: the bridge stops accepting the QR/setup code now."""
+    try:
+        await _hub(hass, msg["entry_id"]).client.call("matter/close_window")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"])
