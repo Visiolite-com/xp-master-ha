@@ -161,6 +161,13 @@ class NetroniHub:
             _LOGGER.debug("config refresh failed: %s", err)
             return
         changed = _structure(config) != _structure(self.config)
+        if changed:
+            # New lights need a state before their entities count as available; the Master
+            # announces them, this re-read also covers an announcement missed in between.
+            try:
+                self.states.update(await self.client.call("get_state"))
+            except (CannotConnect, CommandError) as err:
+                _LOGGER.debug("state refresh failed: %s", err)
         self.config = config
         if changed:
             self._apply_structure()
