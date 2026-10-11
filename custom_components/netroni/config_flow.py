@@ -80,7 +80,21 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(master_id)
         self._abort_if_unique_id_configured(updates={CONF_HOST: self._host, CONF_PORT: self._port})
         self.context["title_placeholders"] = {"name": self._name}
+        if await self._is_this_machine(self._host):
+            # An XP-Master's own Netroni service: add it without asking, so the Netroni panel is
+            # there right after Home Assistant's first-time setup.
+            return self.async_create_entry(title=self._name, data={CONF_HOST: self._host, CONF_PORT: self._port})
         return await self.async_step_zeroconf_confirm()
+
+    async def _is_this_machine(self, host: str) -> bool:
+        """Whether the discovered service runs on the machine Home Assistant runs on."""
+        from homeassistant.components import network
+
+        addresses = {"127.0.0.1", "::1"}
+        for adapter in await network.async_get_adapters(self.hass):
+            addresses.update(ip["address"] for ip in adapter["ipv4"])
+            addresses.update(ip["address"] for ip in adapter["ipv6"])
+        return host in addresses
 
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None

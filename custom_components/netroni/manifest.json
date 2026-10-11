@@ -5,7 +5,8 @@
   "config_flow": true,
   "dependencies": [
     "http",
-    "panel_custom"
+    "panel_custom",
+    "network"
   ],
   "documentation": "https://visiolite.com",
   "integration_type": "hub",
@@ -14,7 +15,7 @@
   "requirements": [
     "segno==1.6.6"
   ],
-  "version": "0.11.1",
+  "version": "0.12.0",
   "zeroconf": [
     "_netroni._tcp.local."
   ]
