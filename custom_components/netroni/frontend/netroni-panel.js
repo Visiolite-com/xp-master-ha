@@ -1,4 +1,4 @@
-// Netroni sidebar panel: installation overview and commissioning.
+// Netroni sidebar panel: installation overview, commissioning and the DMX monitor.
 //
 // A plain web component (no build step). Home Assistant sets `hass` and `narrow`; the structure
 // comes from the integration's "netroni/subscribe" WebSocket subscription and live light states
@@ -7,6 +7,9 @@
 
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
 const MATTER_POLL_S = 10;
+const DMX_POLL_MS = 250;
+const DMX_SLOTS = 512;
+const DMX_BLOCK = 32; // every XP-Mini owns 32 slots: 16 outputs, 2 slots each at 16-bit
 
 const APP_ICONS = {
   SmartThings: "mdi:hub-outline",
@@ -32,6 +35,10 @@ class NetroniPanel extends HTMLElement {
     this._identified = new Map(); // "entry|uid|port" -> {lightIds, until}
     this._matter = {}; // entry_id -> status from netroni/matter_status
     this._windowClosesAt = {}; // entry_id -> ms, when the open pairing window closes (from the bridge)
+    this._dmx = {}; // entry_id -> netroni/dmx_snapshot result (plus fps, measured here)
+    this._dmxPct = false; // show values as % instead of 0-255
+    this._dmxSel = null; // "entry|address" of the channel shown in the info line
+    this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
     this._busy = false;
     this._stateSig = "";
     this._ticks = 0;
@@ -39,6 +46,10 @@ class NetroniPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div id="main"></div><div id="dialog"></div>`;
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
+    this.shadowRoot.addEventListener("mouseover", (ev) => {
+      const cell = ev.target.closest?.(".dmx-grid .dmx-cell");
+      if (cell) this._selectSlot(cell.dataset.entry, Number(cell.dataset.addr));
+    });
     this.shadowRoot.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape" && this._dialog) this._closeDialog();
       if (ev.key === "Enter" && ev.target.matches?.("input") && this._dialog?.kind === "edit") this._saveLight();
@@ -73,6 +84,7 @@ class NetroniPanel extends HTMLElement {
 
   disconnectedCallback() {
     clearInterval(this._timer);
+    this._stopDmxPoll();
     this._unsub?.then((unsub) => unsub()).catch(() => {});
     this._unsub = null;
   }
@@ -97,6 +109,7 @@ class NetroniPanel extends HTMLElement {
       this._error = null;
       this._renderMain();
       if (this._tab === "matter") this._refreshMatter();
+      if (this._tab !== "dmx") this._refreshDmx(); // is there DMX output to show a tab for?
     } else if (msg.kind === "identified") {
       this._onIdentified(msg);
     }
@@ -138,6 +151,7 @@ class NetroniPanel extends HTMLElement {
     const key = `${msg.entry_id}|${msg.uid}|${msg.port}`;
     this._identified.set(key, { lightIds: msg.light_ids || [], until: Date.now() + HIGHLIGHT_MS });
     this._tab = "installation";
+    this._stopDmxPoll();
     this._renderMain();
     requestAnimationFrame(() =>
       this.shadowRoot.getElementById(`port-${msg.uid}-${msg.port}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -160,6 +174,11 @@ class NetroniPanel extends HTMLElement {
         this._tab = d.tab;
         this._renderMain();
         if (this._tab === "matter") this._refreshMatter();
+        if (this._tab === "dmx") this._startDmxPoll();
+        else this._stopDmxPoll();
+        break;
+      case "dmx-slot":
+        this._selectSlot(d.entry, Number(d.addr));
         break;
       case "device":
         history.pushState(null, "", `/config/devices/device/${d.device}`);
@@ -210,6 +229,11 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (el.dataset?.action === "dmx-unit") {
+      this._dmxPct = el.value === "pct";
+      this._updateDmx();
+      return;
+    }
     if (el.dataset?.action !== "tw") return;
     const make = el.checked;
     el.checked = !make; // only the confirmed change counts
@@ -328,6 +352,183 @@ class NetroniPanel extends HTMLElement {
     if (closed && this._ticks % 2 === 0) this._refreshMatter(); // pick up the closed window quickly
   }
 
+  // --- DMX monitor ---------------------------------------------------------------------------
+
+  _startDmxPoll() {
+    this._stopDmxPoll();
+    this._refreshDmx();
+    this._dmxTimer = setInterval(() => this._refreshDmx(), DMX_POLL_MS);
+  }
+
+  _stopDmxPoll() {
+    clearInterval(this._dmxTimer);
+    this._dmxTimer = null;
+  }
+
+  async _refreshDmx() {
+    if (this._dmxBusy || !this._hass) return; // a slow answer: skip a beat rather than pile up requests
+    this._dmxBusy = true;
+    const hadTab = this._hasDmx;
+    try {
+      for (const master of this._data?.masters || []) {
+        const prev = this._dmx[master.entry_id];
+        let snap;
+        try {
+          snap = await this._hass.callWS({ type: "netroni/dmx_snapshot", entry_id: master.entry_id });
+        } catch (err) {
+          snap = { output: false, error: err.message || String(err) };
+        }
+        snap.at = Date.now();
+        if (prev?.output && snap.output && snap.at > prev.at) {
+          const fps = ((snap.frames - prev.frames) * 1000) / (snap.at - prev.at);
+          snap.fps = prev.fps == null ? fps : prev.fps * 0.7 + fps * 0.3; // smoothed
+        }
+        this._dmx[master.entry_id] = snap;
+      }
+    } finally {
+      this._dmxBusy = false;
+    }
+    if (this._tab === "dmx") {
+      if (this._dmxSignature() !== this._dmxSig) this._renderMain();
+      else this._updateDmx();
+    } else if (this._hasDmx !== hadTab) {
+      this._renderMain();
+    }
+  }
+
+  get _hasDmx() {
+    return Object.values(this._dmx).some((snap) => snap.output);
+  }
+
+  /** The grid's layout: which masters send, their XP-Mini blocks, resolution and fixed slots. */
+  _dmxSignature() {
+    return JSON.stringify(
+      (this._data?.masters || []).map((m) => {
+        const snap = this._dmx[m.entry_id] || {};
+        return [m.entry_id, snap.output, snap.error, snap.resolution, snap.fixed, (snap.blocks || []).map((b) => [b.dmx_start, b.name])];
+      })
+    );
+  }
+
+  _selectSlot(entry, addr) {
+    this._dmxSel = `${entry}|${addr}`;
+    this.shadowRoot.querySelectorAll(".dmx-cell.sel").forEach((el) => el.classList.remove("sel"));
+    this.shadowRoot.getElementById(`dmx-${entry}-${addr}`)?.classList.add("sel");
+    this._updateDmx();
+  }
+
+  _dmxValue(value) {
+    return this._dmxPct ? `${Math.round((value / 255) * 100)} %` : String(value);
+  }
+
+  /** Who sets a slot: a fixed value, an XP-Mini output (and the light on it), or nobody. */
+  _slotOwner(master, snap, addr) {
+    if (snap.fixed?.[addr] != null) return "Fixed value (--dmx-fixed)";
+    const block = (snap.blocks || []).find((b) => addr >= b.dmx_start && addr < b.dmx_start + DMX_BLOCK);
+    if (!block) return "Not used";
+    const offset = addr - block.dmx_start;
+    const bits16 = snap.resolution === 16;
+    const output = bits16 ? offset >> 1 : offset;
+    if (output >= DMX_BLOCK / 2) return `${esc(block.name)} block · not used at 8-bit`;
+    const port = (output >> 1) + 1;
+    const side = output % 2 ? "B" : "A";
+    const lights = master.lights.filter((l) => l.mini_uid === block.uid);
+    const light = lights.find((l) => l.key === `port${port}${side.toLowerCase()}`) || lights.find((l) => l.key === `port${port}t`);
+    let text = `${esc(block.name)} · Port ${port}${side}`;
+    if (bits16) text += offset % 2 ? " fine" : " coarse";
+    const tw = light?.key.endsWith("t");
+    if (light && (light.name || tw)) text += ` · ${esc(light.name || light.default_name)}`; // the default name repeats the port
+    if (tw) text += ` (${side === "A" ? "warm" : "cool"} white)`;
+    return text;
+  }
+
+  /** Refresh values, status and the info line in place: the grid stays, so no flicker and the hover is kept. */
+  _updateDmx() {
+    if (this._tab !== "dmx") return;
+    const [selEntry, selAddr] = (this._dmxSel || "").split("|");
+    for (const master of this._data?.masters || []) {
+      const entry = master.entry_id;
+      const snap = this._dmx[entry];
+      const cells = this.shadowRoot.getElementById(`dmx-grid-${entry}`)?.children;
+      if (!snap?.output || !cells) continue;
+      for (let i = 0; i < DMX_SLOTS; i++) {
+        const value = snap.slots[i];
+        const cell = cells[i];
+        if (cell._v === value) continue;
+        cell._v = value;
+        cell.style.background = value ? `rgba(var(--rgb-primary-color, 3, 169, 244), ${(0.15 + (0.85 * value) / 255).toFixed(3)})` : "";
+        cell.classList.toggle("on", value > 0);
+      }
+      const status = this.shadowRoot.getElementById(`dmx-status-${entry}`);
+      if (status) status.innerHTML = this._dmxStatus(snap);
+      const info = this.shadowRoot.getElementById(`dmx-info-${entry}`);
+      if (info) {
+        info.innerHTML =
+          selEntry === entry
+            ? `<b>Channel ${selAddr}</b> · ${this._dmxValue(snap.slots[selAddr - 1])} · ${this._slotOwner(master, snap, Number(selAddr))}`
+            : `<span class="sub">Point at a channel (or tap it) to see its value and what sets it.</span>`;
+      }
+    }
+  }
+
+  _dmxStatus(snap) {
+    const rate = snap.fps != null ? `${Math.round(snap.fps)} frames/s` : `${snap.rate} frames/s`;
+    const fixed = Object.entries(snap.fixed || {}).map(([a, v]) => `${a} = ${v}`).join(", ");
+    return `${this._chip(!snap.errors, "Sending", "Frames failing")}
+      ${this._fact("Port", esc(snap.device))}
+      ${this._fact("Resolution", `${snap.resolution}-bit`)}
+      ${this._fact("Rate", rate)}
+      ${this._fact("Fixed", fixed || "none")}`;
+  }
+
+  _dmxCard(master) {
+    const snap = this._dmx[master.entry_id];
+    const unit = snap?.output
+      ? `<select class="dmx-unit" data-action="dmx-unit" title="Show values as">
+          <option value="raw" ${this._dmxPct ? "" : "selected"}>0–255</option>
+          <option value="pct" ${this._dmxPct ? "selected" : ""}>%</option></select>`
+      : "";
+    const head = `
+      <div class="card-head">
+        <ha-icon class="head-icon" icon="mdi:knob"></ha-icon>
+        <div class="grow"><h2>DMX Output</h2><div class="sub">${esc(master.name)} · Universe 1</div></div>
+        ${unit}
+      </div>`;
+    if (!snap) return `<section class="card">${head}<div class="empty small">Loading…</div></section>`;
+    if (!snap.output) {
+      const why = snap.error ? esc(snap.error) : "This XP-Master doesn't send DMX itself.";
+      return `<section class="card">${head}<div class="sub pad">${why}</div></section>`;
+    }
+    const entry = master.entry_id;
+    const starts = new Map((snap.blocks || []).map((b) => [b.dmx_start, b]));
+    let labels = "";
+    for (let start = 1; start <= DMX_SLOTS; start += DMX_BLOCK) {
+      const block = starts.get(start);
+      labels += `<div class="dmx-label">${start}${block ? ` <span>${esc(block.name)}</span>` : ""}</div>`;
+    }
+    let cells = "";
+    for (let addr = 1; addr <= DMX_SLOTS; addr++) {
+      const fixed = snap.fixed?.[addr] != null ? " fixed" : "";
+      const sel = this._dmxSel === `${entry}|${addr}` ? " sel" : "";
+      cells += `<div class="dmx-cell${fixed}${sel}" id="dmx-${entry}-${addr}" data-action="dmx-slot" data-entry="${entry}" data-addr="${addr}"></div>`;
+    }
+    return `
+      <section class="card">
+        ${head}
+        <div class="facts dmx-status" id="dmx-status-${entry}">${this._dmxStatus(snap)}</div>
+        <div class="dmx">
+          <div class="dmx-labels">${labels}</div>
+          <div class="dmx-grid" id="dmx-grid-${entry}">${cells}</div>
+        </div>
+        <div class="dmx-info" id="dmx-info-${entry}"></div>
+        <div class="dmx-legend sub">
+          <span><i class="dmx-cell on" style="background: rgba(var(--rgb-primary-color, 3, 169, 244), .6)"></i>Value: the brighter, the higher</span>
+          <span><i class="dmx-cell fixed"></i>Fixed value</span>
+          <span><i class="dmx-cell"></i>Zero or not used</span>
+        </div>
+      </section>`;
+  }
+
   // --- lookups ------------------------------------------------------------------------------
 
   _master(entry) {
@@ -357,10 +558,15 @@ class NetroniPanel extends HTMLElement {
       <div class="tabs">
         ${this._tabButton("installation", "Installation")}
         ${this._tabButton("matter", "Matter Connections")}
+        ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
       <div class="content"><div class="inner">${this._body()}</div></div>`;
     if (scroll) this.shadowRoot.querySelector(".content").scrollTop = scroll;
     if (this._tab === "matter") this._updateCountdowns();
+    if (this._tab === "dmx") {
+      this._dmxSig = this._dmxSignature();
+      this._updateDmx();
+    }
   }
 
   _tabButton(tab, label) {
@@ -373,9 +579,9 @@ class NetroniPanel extends HTMLElement {
     if (!this._data.masters.length) {
       return `<div class="empty">No XP-Master is connected. Add one in Settings → Devices &amp; services.</div>`;
     }
-    return this._tab === "matter"
-      ? this._data.masters.map((m) => this._matterCard(m)).join("")
-      : this._data.masters.map((m) => this._installation(m)).join("");
+    if (this._tab === "matter") return this._data.masters.map((m) => this._matterCard(m)).join("");
+    if (this._tab === "dmx") return this._data.masters.map((m) => this._dmxCard(m)).join("");
+    return this._data.masters.map((m) => this._installation(m)).join("");
   }
 
   _banner(kind, icon, html, action = "") {
@@ -731,8 +937,28 @@ const STYLE = `
   .field input, .field select { width: 100%; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
     background: var(--primary-background-color); color: var(--primary-text-color); }
   .field input:focus, .field select:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; }
+  .dmx-unit { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--primary-text-color); }
+  .dmx-status { align-items: center; }
+  .dmx { --dmx-row: 18px; display: flex; gap: 8px; margin-top: 16px; }
+  .dmx-labels { display: grid; grid-auto-rows: var(--dmx-row); row-gap: 2px; flex: none; width: 128px; }
+  .dmx-label { font-size: 11px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden;
+    display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .dmx-label span { color: var(--primary-text-color); overflow: hidden; text-overflow: ellipsis; }
+  .dmx-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(32, 1fr); grid-auto-rows: var(--dmx-row); gap: 2px; }
+  .dmx-cell { border: 1px solid var(--line); border-radius: 3px; cursor: pointer; min-width: 0; }
+  .dmx-cell.on { border-color: transparent; }
+  .dmx-cell.fixed { box-shadow: inset 0 0 0 2px var(--warn); }
+  .dmx-cell.sel { outline: 2px solid var(--primary-text-color); outline-offset: -1px; }
+  .dmx-info { margin-top: 12px; min-height: 20px; font-size: 14px; }
+  .dmx-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
+  .dmx-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dmx-legend .dmx-cell { display: inline-block; width: 12px; height: 12px; cursor: default; }
   @media (max-width: 600px) {
     .inner { padding: 12px; }
+    .dmx-labels { width: 32px; grid-auto-rows: calc(2 * var(--dmx-row) + 2px); } /* a block takes two lines of 16 */
+    .dmx-label span { display: none; }
+    .dmx-grid { grid-template-columns: repeat(16, 1fr); }
     .ports { grid-template-columns: 1fr 1fr; }
     .facts { gap: 8px 20px; }
   }

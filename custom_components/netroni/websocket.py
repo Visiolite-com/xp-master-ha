@@ -36,6 +36,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_set_pairs,
         ws_update_light,
         ws_remove_mini,
+        ws_dmx_snapshot,
         ws_matter_status,
         ws_matter_open_window,
         ws_matter_close_window,
@@ -265,6 +266,18 @@ async def ws_remove_mini(hass: HomeAssistant, connection: websocket_api.ActiveCo
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/dmx_snapshot", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_dmx_snapshot(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The DMX monitor: what the XP-Master sends, for everyone to look at (read-only)."""
+    try:
+        snapshot = await _hub(hass, msg["entry_id"]).client.call("dmx/snapshot")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], snapshot)
 
 
 async def _with_qr(hass: HomeAssistant, status: dict) -> dict:
