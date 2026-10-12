@@ -25,6 +25,8 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .client import CannotConnect, CommandError, NetroniClient, NetroniError
 from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
+
+LOCALHOST = "127.0.0.1"  # Home Assistant and the Netroni service share the host network
 from .matter import async_open_window, paired_apps_text, qr_placeholders
 
 
@@ -78,23 +80,28 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         self._host, self._port = discovery_info.host, discovery_info.port or DEFAULT_PORT
         self._name = discovery_info.name.split(".")[0]
         await self.async_set_unique_id(master_id)
+        local = await self._is_this_machine(master_id, self._port)
+        if local:
+            self._host = LOCALHOST  # this machine's own service: independent of the LAN address
         self._abort_if_unique_id_configured(updates={CONF_HOST: self._host, CONF_PORT: self._port})
         self.context["title_placeholders"] = {"name": self._name}
-        if await self._is_this_machine(self._host):
+        if local:
             # An XP-Master's own Netroni service: add it without asking, so the Netroni panel is
             # there right after Home Assistant's first-time setup.
             return self.async_create_entry(title=self._name, data={CONF_HOST: self._host, CONF_PORT: self._port})
         return await self.async_step_zeroconf_confirm()
 
-    async def _is_this_machine(self, host: str) -> bool:
-        """Whether the discovered service runs on the machine Home Assistant runs on."""
-        from homeassistant.components import network
+    async def _is_this_machine(self, master_id: str, port: int) -> bool:
+        """Whether the discovered XP-Master is the one on this machine: same id on 127.0.0.1.
 
-        addresses = {"127.0.0.1", "::1"}
-        for adapter in await network.async_get_adapters(self.hass):
-            addresses.update(ip["address"] for ip in adapter["ipv4"])
-            addresses.update(ip["address"] for ip in adapter["ipv6"])
-        return host in addresses
+        Compared by id, not by address: two XP-Masters on one network can share a host name, which
+        mixes up the addresses that discovery reports.
+        """
+        try:
+            hello = await self._probe(LOCALHOST, port)
+        except (CannotConnect, CommandError):
+            return False
+        return hello.get("master", {}).get("id") == master_id
 
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None
