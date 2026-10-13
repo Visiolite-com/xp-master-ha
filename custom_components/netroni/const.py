@@ -7,8 +7,8 @@ API_VERSION = 3  # Netroni service API this integration speaks
 
 PORTS_PER_MINI = 8  # Port 1..8, each with an A and a B output
 
-KELVIN_WARM = 2700
-KELVIN_COOL = 6500
+KELVIN_WARM = 2200
+KELVIN_COOL = 5000
 
 SIGNAL_HUBS_CHANGED = "netroni_hubs_changed"  # an XP-Master was set up or unloaded (panel)
 

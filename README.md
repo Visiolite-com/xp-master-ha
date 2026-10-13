@@ -14,7 +14,7 @@ over its local WebSocket API and pushes updates instantly (`local_push`).
 | Light | Kind | Behaviour |
 | --- | --- | --- |
 | Port 1A … Port 8B | Dimmable | One per output (default) |
-| Port nT | Tunable white, 2700–6500 K | Replaces Port nA and nB when the port is tunable white; warm = A 100 % / B 0 %, cool = the reverse |
+| Port nT | Tunable white, 2200–5000 K | Replaces Port nA and nB when the port is tunable white; warm = A 100 % / B 0 %, cool = the reverse |
 
 Choose tunable-white ports under Settings → Devices & services → Netroni XP-Master → **gear icon**:
 pick the XP-Mini, tick the ports that should be tunable white, confirm. Only the lights of the
