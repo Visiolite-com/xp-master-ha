@@ -708,6 +708,7 @@ class NetroniPanel extends HTMLElement {
     let body;
     if (!status) body = `<div class="empty small">Loading…</div>`;
     else if (status.error) body = this._banner("error", "mdi:alert-circle-outline", esc(status.error));
+    else if (!status.connected && status.starting) body = this._banner("info", "mdi:timer-sand", "The Matter bridge of the XP-Master is starting. This takes about a minute.");
     else if (!status.connected) body = this._banner("warn", "mdi:power-plug-off-outline", "The Matter bridge of the XP-Master is not running.");
     else body = this._matterBody(master, status);
     return `
@@ -874,6 +875,8 @@ const STYLE = `
   .banner { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border-radius: 10px; line-height: 1.4; }
   .banner.warn { background: rgba(255, 166, 0, .14); }
   .banner.warn > ha-icon { color: var(--warn); }
+  .banner.info { background: rgba(var(--rgb-primary-color, 3, 169, 244), .12); }
+  .banner.info > ha-icon { color: var(--primary-color); }
   .banner.error { background: rgba(219, 68, 55, .12); }
   .banner.error > ha-icon { color: var(--bad); }
   .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 16px; }

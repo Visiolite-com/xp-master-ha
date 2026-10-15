@@ -20,6 +20,8 @@ async def async_open_window(hub: NetroniHub) -> dict:
     """
     status = await hub.client.call("matter/status")
     if not status.get("connected"):
+        if status.get("starting"):
+            raise NetroniError("the Matter bridge of the XP-Master is still starting; try again in a minute")
         raise NetroniError("the Matter bridge of the XP-Master is not running")
     if status.get("window_open"):
         return status

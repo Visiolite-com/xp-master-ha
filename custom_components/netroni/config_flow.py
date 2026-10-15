@@ -144,7 +144,7 @@ class NetroniOptionsFlow(OptionsFlow):
         except NetroniError as err:
             return self.async_abort(reason="matter_failed", description_placeholders={"error": str(err)})
         if not status.get("connected"):
-            return self.async_abort(reason="matter_unavailable")
+            return self.async_abort(reason="matter_starting" if status.get("starting") else "matter_unavailable")
         paired = bool(status.get("commissioned") and status.get("fabrics"))
         return self.async_show_menu(
             step_id="matter",
