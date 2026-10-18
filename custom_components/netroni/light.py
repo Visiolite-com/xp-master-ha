@@ -11,11 +11,12 @@ from homeassistant.components.light import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
 from .client import NetroniError
-from .const import KELVIN_COOL, KELVIN_WARM
+from .const import DOMAIN, KELVIN_COOL, KELVIN_WARM
 from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
 from .sync import async_push_label, async_restore_area
@@ -31,8 +32,66 @@ async def async_setup_entry(
         entry,
         hub,
         async_add_entities,
-        lambda config: {l["id"]: (lambda l=l: NetroniLight(hub, l)) for l in config.get("lights", [])},
+        lambda config: {
+            **{l["id"]: (lambda l=l: NetroniLight(hub, l)) for l in config.get("lights", [])},
+            **{f"group/{g['id']}": (lambda g=g: NetroniGroupLight(hub, g)) for g in config.get("groups", [])},
+        },
     )
+
+
+class NetroniGroupLight(LightEntity):
+    """A group: on if any member is on; its brightness is the fader over the members' own levels."""
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+    _attr_color_mode = ColorMode.BRIGHTNESS
+    _attr_icon = "mdi:lightbulb-group-outline"
+
+    def __init__(self, hub: NetroniHub, group: dict) -> None:
+        self.hub = hub
+        self.group_id = group["id"]
+        self._attr_unique_id = f"{hub.master_id}_group/{group['id']}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, hub.master_id)})
+
+    @property
+    def name(self) -> str:
+        return (self.hub.group(self.group_id) or {}).get("name", self.group_id)
+
+    @property
+    def available(self) -> bool:
+        return self.hub.available and self.group_id in self.hub.group_states
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.hub.group_states.get(self.group_id, {}).get("on"))
+
+    @property
+    def brightness(self) -> int | None:
+        return self.hub.group_states.get(self.group_id, {}).get("brightness")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        group = self.hub.group(self.group_id) or {}
+        return {"netroni_group_id": self.group_id, "members": group.get("members", [])}
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        fields: dict[str, Any] = {"on": True}
+        if ATTR_BRIGHTNESS in kwargs:
+            fields["brightness"] = max(1, int(kwargs[ATTR_BRIGHTNESS]))
+        await self._set(fields)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._set({"on": False})
+
+    async def _set(self, fields: dict) -> None:
+        try:
+            await self.hub.client.call("group/set", group_id=self.group_id, **fields)
+        except NetroniError as err:
+            raise HomeAssistantError(str(err)) from err
 
 
 class NetroniLight(NetroniEntity, LightEntity):

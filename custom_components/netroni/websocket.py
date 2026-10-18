@@ -35,6 +35,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_identify,
         ws_set_pairs,
         ws_set_cct_range,
+        ws_group_save,
+        ws_group_delete,
         ws_update_light,
         ws_remove_mini,
         ws_dmx_snapshot,
@@ -104,8 +106,18 @@ def _overview(hass: HomeAssistant) -> dict:
                     "area": area_name(area_id),
                     "min_kelvin": light.get("min_kelvin"),  # tunable white: the port's colour range
                     "max_kelvin": light.get("max_kelvin"),
+                    "group": light.get("group"),
                 }
             )
+        groups = [
+            {
+                "id": group["id"],
+                "name": group["name"],
+                "members": group.get("members", []),
+                "entity_id": ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{group['id']}"),
+            }
+            for group in hub.config.get("groups", [])
+        ]
         masters.append(
             {
                 "entry_id": hub.entry.entry_id,
@@ -118,6 +130,7 @@ def _overview(hass: HomeAssistant) -> dict:
                 "ports_per_mini": PORTS_PER_MINI,
                 "minis": minis,
                 "lights": lights,
+                "groups": groups,
             }
         )
     return {"masters": masters}
@@ -204,6 +217,46 @@ def _error(connection: websocket_api.ActiveConnection, msg_id: int, err: Netroni
 async def ws_identify(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     try:
         await _hub(hass, msg["entry_id"]).client.call("mini/identify", uid=msg["uid"], port=msg["port"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/group_save",
+        vol.Required("entry_id"): str,
+        vol.Optional("group_id"): str,  # absent: a new group
+        vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
+        vol.Required("members"): [str],
+    }
+)
+@websocket_api.async_response
+async def ws_group_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Create a group, or change its name and members (a light in another group moves here)."""
+    client = _hub(hass, msg["entry_id"]).client
+    try:
+        if "group_id" in msg:
+            await client.call("group/update", group_id=msg["group_id"], name=msg["name"], members=msg["members"])
+            result = {"group_id": msg["group_id"]}
+        else:
+            result = await client.call("group/create", name=msg["name"], members=msg["members"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/group_delete", vol.Required("entry_id"): str, vol.Required("group_id"): str}
+)
+@websocket_api.async_response
+async def ws_group_delete(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    try:
+        await _hub(hass, msg["entry_id"]).client.call("group/delete", group_id=msg["group_id"])
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

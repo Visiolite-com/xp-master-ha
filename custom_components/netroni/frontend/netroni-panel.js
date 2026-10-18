@@ -1,4 +1,4 @@
-// Netroni sidebar panel: installation overview, commissioning and the DMX monitor.
+// Netroni sidebar panel: installation overview, groups, commissioning and the DMX monitor.
 //
 // A plain web component (no build step). Home Assistant sets `hass` and `narrow`; the structure
 // comes from the integration's "netroni/subscribe" WebSocket subscription and live light states
@@ -140,6 +140,10 @@ class NetroniPanel extends HTMLElement {
         const st = this._hass.states[light.entity_id];
         parts.push(st ? `${st.state}/${st.attributes.brightness}/${st.attributes.color_temp_kelvin}` : "-");
       }
+      for (const group of master.groups || []) {
+        const st = this._hass.states[group.entity_id];
+        parts.push(st ? `${st.state}/${st.attributes.brightness}` : "-");
+      }
     }
     return parts.join("|");
   }
@@ -231,6 +235,20 @@ class NetroniPanel extends HTMLElement {
         this._openDialog({ kind: "cct", entry: d.entry, uid: d.uid, port: Number(d.port), warm: range[0], cool: range[1] });
         break;
       }
+      case "new-group":
+        this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [] });
+        break;
+      case "edit-group": {
+        const group = this._master(d.entry)?.groups.find((g) => g.id === d.group);
+        if (group) this._openDialog({ kind: "group", entry: d.entry, groupId: group.id, name: group.name, members: [...group.members] });
+        break;
+      }
+      case "save-group":
+        this._saveGroup();
+        break;
+      case "delete-group":
+        this._deleteGroup();
+        break;
       case "save-cct":
         this._saveCct();
         break;
@@ -254,6 +272,19 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (el.dataset?.action === "dim") {
+      const brightness = Math.max(1, Math.min(255, Number(el.value)));
+      this._hass
+        .callService("light", "turn_on", { entity_id: el.dataset.entity, brightness })
+        .catch((err) => this._toast(err.message || String(err)));
+      return;
+    }
+    if (el.dataset?.action === "member") {
+      if (!this._dialog) return;
+      const id = el.dataset.light;
+      this._dialog.members = el.checked ? [...this._dialog.members, id] : this._dialog.members.filter((m) => m !== id);
+      return;
+    }
     if (el.id === "cct-preset") {
       const preset = CCT_PRESETS[Number(el.value)];
       if (preset) {
@@ -305,6 +336,29 @@ class NetroniPanel extends HTMLElement {
     const name = this.shadowRoot.getElementById("light-name").value;
     const area = this.shadowRoot.getElementById("light-area").value || null;
     await this._run(() => this._call({ type: "netroni/update_light", entity_id: light.entity_id, name, area_id: area }));
+  }
+
+  async _saveGroup() {
+    const d = this._dialog;
+    const name = (this.shadowRoot.getElementById("group-name")?.value || "").trim();
+    if (!name) {
+      this._toast("Give the group a name");
+      return;
+    }
+    d.name = name;
+    const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members };
+    if (d.groupId) msg.group_id = d.groupId;
+    await this._run(() => this._call(msg));
+  }
+
+  async _deleteGroup() {
+    const d = this._dialog;
+    if (!d.confirmDelete) {
+      d.confirmDelete = true; // second click deletes
+      this._renderDialog();
+      return;
+    }
+    await this._run(() => this._call({ type: "netroni/group_delete", entry_id: d.entry, group_id: d.groupId }));
   }
 
   _cctInputs() {
@@ -609,6 +663,7 @@ class NetroniPanel extends HTMLElement {
       </div>
       <div class="tabs">
         ${this._tabButton("installation", "Installation")}
+        ${this._tabButton("groups", "Groups")}
         ${this._tabButton("matter", "Matter Connections")}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
@@ -632,6 +687,7 @@ class NetroniPanel extends HTMLElement {
       return `<div class="empty">No XP-Master is connected. Add one in Settings → Devices &amp; services.</div>`;
     }
     if (this._tab === "matter") return this._data.masters.map((m) => this._matterCard(m)).join("");
+    if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
     if (this._tab === "dmx") return this._data.masters.map((m) => this._dmxCard(m)).join("");
     return this._data.masters.map((m) => this._installation(m)).join("");
   }
@@ -772,6 +828,64 @@ class NetroniPanel extends HTMLElement {
       </div>`;
   }
 
+  _groupsCard(master) {
+    const groups = master.groups || [];
+    const intro = groups.length
+      ? ""
+      : `<section class="card"><div class="card-head"><ha-icon class="head-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
+          <div class="grow"><h2>Groups</h2><div class="sub">${esc(master.name)} · Lights dimmed together: each keeps its own level, the group dims them all.</div></div></div>
+          <div class="sub pad">No groups yet.</div></section>`;
+    const add = this._admin
+      ? `<div class="actions"><button class="btn" data-action="new-group" data-entry="${master.entry_id}">New group</button></div>`
+      : "";
+    return intro + groups.map((g) => this._groupCard(master, g)).join("") + add;
+  }
+
+  _groupCard(master, group) {
+    const gst = this._hass.states[group.entity_id];
+    const fader = Number(gst?.attributes.brightness ?? 255);
+    const on = gst?.state === "on";
+    const members = group.members.map((id) => master.lights.find((l) => l.id === id)).filter(Boolean);
+    const minis = new Set(members.map((l) => l.mini_uid)).size;
+    const pct = (v) => `${Math.round((v / 255) * 100)} %`;
+    const rows = members
+      .map((light) => {
+        const st = this._hass.states[light.entity_id];
+        const unavailable = !st || st.state === "unavailable";
+        const lit = st?.state === "on";
+        const own = Number(st?.attributes.brightness ?? 0) || 0;
+        const out = lit ? Math.round((own * fader) / 255) : 0;
+        const mini = this._miniName(master, light.mini_uid);
+        return `
+          <div class="grow-row ${lit ? "on" : ""}">
+            <button class="lamp" data-action="toggle" data-entity="${esc(light.entity_id)}" ${unavailable ? "disabled" : ""}><ha-icon icon="mdi:lightbulb-outline"></ha-icon></button>
+            <div class="gr-name"><div class="light-name">${esc(light.name || light.default_name)}</div><div class="light-sub">${esc(mini)} · ${light.key.replace("port", "").toUpperCase()}</div></div>
+            <input class="slider own" type="range" min="1" max="255" value="${own || 255}" data-action="dim" data-entity="${esc(light.entity_id)}" ${unavailable ? "disabled" : ""}>
+            <div class="gr-pct">${unavailable ? "Unavailable" : lit ? `own ${pct(own)} → <b>${pct(out)}</b>` : "Off"}</div>
+          </div>`;
+      })
+      .join("");
+    const edit = this._admin
+      ? `<button class="btn secondary" data-action="edit-group" data-entry="${master.entry_id}" data-group="${esc(group.id)}">Edit</button>`
+      : "";
+    return `
+      <section class="card">
+        <div class="card-head">
+          <ha-icon class="head-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
+          <div class="grow"><h3>${esc(group.name)}</h3>
+            <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""}</div></div>
+          ${edit}
+        </div>
+        <div class="grow-row group-fader ${on ? "on" : ""}">
+          <button class="lamp" data-action="toggle" data-entity="${esc(group.entity_id)}" ${gst ? "" : "disabled"}><ha-icon icon="mdi:lightbulb-group-outline"></ha-icon></button>
+          <div class="gr-name"><div class="light-name"><b>Group</b></div><div class="light-sub">dims all members together</div></div>
+          <input class="slider" type="range" min="1" max="255" value="${fader}" data-action="dim" data-entity="${esc(group.entity_id)}" ${gst ? "" : "disabled"}>
+          <div class="gr-pct"><b>${on ? pct(fader) : "Off"}</b></div>
+        </div>
+        ${rows || `<div class="sub pad">No lights in this group. ${this._admin ? "Use Edit to add some." : ""}</div>`}
+      </section>`;
+  }
+
   _matterCard(master) {
     const status = this._matter[master.entry_id];
     let body;
@@ -872,6 +986,31 @@ class NetroniPanel extends HTMLElement {
             ${areas.map((a) => `<option value="${esc(a.area_id)}" ${a.area_id === current ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
           </select></label>`;
       action = `<button class="btn" data-action="save-light" ${this._busy ? "disabled" : ""}>Save</button>`;
+    } else if (d.kind === "group") {
+      const master = this._master(d.entry);
+      const typed = this.shadowRoot.getElementById("group-name")?.value;
+      title = d.groupId ? `Edit ${esc(d.name)}` : "New group";
+      const byMini = master.minis
+        .map((mini) => {
+          const items = master.lights
+            .filter((l) => l.mini_uid === mini.uid)
+            .map((l) => {
+              const other = l.group && l.group !== d.groupId ? master.groups.find((g) => g.id === l.group) : null;
+              const checked = d.members.includes(l.id) ? "checked" : "";
+              return `<label class="member"><input type="checkbox" data-action="member" data-light="${esc(l.id)}" ${checked} ${this._busy ? "disabled" : ""}>
+                <span>${esc(l.name || l.default_name)}</span><span class="sub">${l.key.replace("port", "").toUpperCase()}${other ? ` · in ${esc(other.name)}, moves here` : ""}</span></label>`;
+            })
+            .join("");
+          return `<div class="member-mini">${esc(mini.name)}</div>${items}`;
+        })
+        .join("");
+      body = `
+        <label class="field"><span>Name</span>
+          <input id="group-name" type="text" value="${esc(typed ?? d.name)}" placeholder="Kitchen ceiling" ${this._busy ? "disabled" : ""}></label>
+        <div class="members-block"><div class="members-label">Lights</div><div class="members">${byMini}</div></div>
+        <p class="sub">A light is in one group at most. Dimming the group keeps the lights' own levels relative to each other.</p>`;
+      action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
+        <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "cct") {
       const mini = this._mini(d.entry, d.uid);
       const light = this._master(d.entry)?.lights.find((l) => l.mini_uid === d.uid && l.key === `port${d.port}t`);
@@ -1007,6 +1146,22 @@ const STYLE = `
   .field-row { display: flex; gap: 12px; }
   .field-row .field { flex: 1; }
   .field input:disabled { opacity: .7; }
+  .grow-row { display: grid; grid-template-columns: 34px minmax(120px, 200px) 1fr 140px; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .grow-row.group-fader { border-top: 0; margin-top: 8px; }
+  .grow-row.on .lamp { color: var(--lamp-on); background: rgba(255, 152, 0, .16); }
+  .gr-name { min-width: 0; }
+  .gr-pct { font-size: 13px; text-align: right; color: var(--secondary-text-color); }
+  .gr-pct b { color: var(--primary-text-color); font-weight: 500; }
+  .slider { width: 100%; accent-color: var(--primary-color); }
+  .slider.own { accent-color: rgba(var(--rgb-primary-color, 3, 169, 244), .55); }
+  .members { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; }
+  .member-mini { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin: 8px 0 2px; }
+  .members-block { margin-top: 14px; }
+  .members-label { font-size: 12px; color: var(--secondary-text-color); margin-bottom: 4px; }
+  .member { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; cursor: pointer; }
+  .member input { width: auto; margin: 0; flex: none; }
+  .member .sub { margin-left: auto; font-size: 12px; }
+  @media (max-width: 600px) { .grow-row { grid-template-columns: 34px 1fr 90px; } .grow-row .slider { grid-column: 1 / -1; } }
   .cct-bar { height: 14px; border-radius: 7px; margin-top: 16px; border: 1px solid var(--line);
     background: linear-gradient(90deg, #ffb35c, #ffe1b8 50%, #eaf3ff); }
   .cct-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--secondary-text-color); margin-top: 3px; }

@@ -35,6 +35,7 @@ class NetroniHub:
         self.master: dict = {}
         self.config: dict = {}
         self.states: dict[str, dict] = {}
+        self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
@@ -69,19 +70,30 @@ class NetroniHub:
                 )
             config = await self.client.call("get_config")
             states = await self.client.call("get_state")
+            group_states = await self._group_states()
             await self.client.call("subscribe")
         except (CannotConnect, CommandError):
             await self.client.close()
             raise
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         self.master, self.config, self.states = hello["master"], config, states
+        self.group_states = group_states
         self.available = True
         if changed:  # e.g. an XP-Mini added while we were disconnected
             self._apply_structure()
         self.async_update_offline_issues()
         self._notify()
 
+    async def _group_states(self) -> dict:
+        try:
+            return await self.client.call("group/get_state")
+        except CommandError:  # a Netroni service from before groups
+            return {}
+
     # --- lookups -----------------------------------------------------------
+
+    def group(self, group_id: str) -> dict | None:
+        return next((g for g in self.config.get("groups", []) if g["id"] == group_id), None)
 
     def light(self, light_id: str) -> dict | None:
         return next((l for l in self.config.get("lights", []) if l["id"] == light_id), None)
@@ -100,6 +112,7 @@ class NetroniHub:
         """Unique ids of every entity the current configuration should have."""
         prefix = f"{self.master_id}_"
         ids = {prefix + light["id"] for light in self.config.get("lights", [])}
+        ids.update(f"{prefix}group/{group['id']}" for group in self.config.get("groups", []))
         for mini in self.config.get("minis", []):
             ids.update(
                 f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
@@ -126,6 +139,12 @@ class NetroniHub:
     def _on_event(self, event: str, data: dict) -> None:
         if event == "state_changed":
             self.states[data["light_id"]] = data["state"]
+            self._notify()
+        elif event == "group_changed":
+            self.group_states[data["group_id"]] = data["state"]
+            self._notify()
+        elif event == "group_removed":
+            self.group_states.pop(data["group_id"], None)
             self._notify()
         elif event == "config_changed":
             self.entry.async_create_background_task(
@@ -166,6 +185,7 @@ class NetroniHub:
             # announces them, this re-read also covers an announcement missed in between.
             try:
                 self.states.update(await self.client.call("get_state"))
+                self.group_states.update(await self._group_states())
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("state refresh failed: %s", err)
         self.config = config
@@ -259,4 +279,5 @@ def _structure(config: dict) -> tuple:
     return (
         tuple(sorted(m["uid"] for m in config.get("minis", []))),
         tuple(sorted(l["id"] for l in config.get("lights", []))),
+        tuple(sorted(g["id"] for g in config.get("groups", []))),
     )
