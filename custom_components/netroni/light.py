@@ -44,11 +44,18 @@ class NetroniLight(NetroniEntity, LightEntity):
         if light["kind"] == "tunable_white":
             self._attr_supported_color_modes = {ColorMode.COLOR_TEMP}
             self._attr_color_mode = ColorMode.COLOR_TEMP
-            self._attr_min_color_temp_kelvin = KELVIN_WARM
-            self._attr_max_color_temp_kelvin = KELVIN_COOL
         else:
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
             self._attr_color_mode = ColorMode.BRIGHTNESS
+
+    # The colour range is the port's own (set in the Netroni panel), so it is read live.
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        return (self.hub.light(self.light_id) or {}).get("min_kelvin", KELVIN_WARM)
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        return (self.hub.light(self.light_id) or {}).get("max_kelvin", KELVIN_COOL)
 
     @property
     def _state(self) -> dict:

@@ -22,6 +22,15 @@ const APP_ICONS = {
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// Colour ranges of tunable-white strips; the first is the default (Visiolite strips).
+const CCT_DEFAULT = [2200, 5000];
+const CCT_PRESETS = [
+  { label: "Visiolite strip", range: CCT_DEFAULT },
+  { label: "Warm to daylight", range: [2700, 6500] },
+  { label: "Warm to cool", range: [3000, 6000] },
+];
+const cctLabel = ([warm, cool]) => `${warm}–${cool} K`;
+
 const portOf = (light) => Number(/^port(\d+)/.exec(light.key)?.[1]);
 const tagOf = (light) => light.key.replace(/^port/, "").toUpperCase(); // "3A", "3T"
 
@@ -46,6 +55,13 @@ class NetroniPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div id="main"></div><div id="dialog"></div>`;
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
+    this.shadowRoot.addEventListener("input", (ev) => {
+      if (ev.target.id !== "cct-warm" && ev.target.id !== "cct-cool") return;
+      const { warm, cool } = this._cctInputs();
+      Object.assign(this._dialog, { warm, cool, custom: true });
+      const labels = this.shadowRoot.getElementById("cct-labels");
+      if (labels && warm && cool) labels.innerHTML = this._cctLabels(warm, cool);
+    });
     this.shadowRoot.addEventListener("mouseover", (ev) => {
       const cell = ev.target.closest?.(".dmx-grid .dmx-cell");
       if (cell) this._selectSlot(cell.dataset.entry, Number(cell.dataset.addr));
@@ -209,6 +225,15 @@ class NetroniPanel extends HTMLElement {
       case "confirm-remove":
         this._removeMini();
         break;
+      case "cct": {
+        const mini = this._mini(d.entry, d.uid);
+        const range = this._cctRange(this._master(d.entry), mini, Number(d.port));
+        this._openDialog({ kind: "cct", entry: d.entry, uid: d.uid, port: Number(d.port), warm: range[0], cool: range[1] });
+        break;
+      }
+      case "save-cct":
+        this._saveCct();
+        break;
       case "confirm-pairs":
         this._setPairs();
         break;
@@ -229,6 +254,16 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (el.id === "cct-preset") {
+      const preset = CCT_PRESETS[Number(el.value)];
+      if (preset) {
+        this._dialog.warm = preset.range[0];
+        this._dialog.cool = preset.range[1];
+      }
+      this._dialog.custom = !preset;
+      this._renderDialog();
+      return;
+    }
     if (el.dataset?.action === "dmx-unit") {
       this._dmxPct = el.value === "pct";
       this._updateDmx();
@@ -270,6 +305,23 @@ class NetroniPanel extends HTMLElement {
     const name = this.shadowRoot.getElementById("light-name").value;
     const area = this.shadowRoot.getElementById("light-area").value || null;
     await this._run(() => this._call({ type: "netroni/update_light", entity_id: light.entity_id, name, area_id: area }));
+  }
+
+  _cctInputs() {
+    const warm = Number(this.shadowRoot.getElementById("cct-warm")?.value);
+    const cool = Number(this.shadowRoot.getElementById("cct-cool")?.value);
+    const valid = Number.isInteger(warm) && Number.isInteger(cool) && warm >= 1000 && cool <= 10000 && cool - warm >= 100;
+    return { warm, cool, valid };
+  }
+
+  async _saveCct() {
+    const { entry, uid, port } = this._dialog;
+    const { warm, cool, valid } = this._cctInputs();
+    if (!valid) {
+      this._toast("Warm must be at least 100 K below cool, both between 1000 and 10000 K");
+      return;
+    }
+    await this._run(() => this._call({ type: "netroni/set_cct_range", entry_id: entry, uid, port, warm, cool }));
   }
 
   async _setPairs() {
@@ -672,11 +724,28 @@ class NetroniPanel extends HTMLElement {
             title="Identify: flash Port ${port}A and ${port}B"><ha-icon icon="mdi:flash-outline"></ha-icon></button>
         </div>
         ${lights.map((l) => this._light(master, l, hl)).join("")}
-        <label class="tw ${this._admin ? "" : "readonly"}" title="${this._admin ? "One light: A warm white, B cool white" : "Only an administrator can change this"}">
-          <input type="checkbox" data-action="tw" ${data} ${tw ? "checked" : ""} ${this._admin ? "" : "disabled"}>
-          <span class="switch"></span>Tunable white
-        </label>
+        <div class="tw-row">
+          <label class="tw ${this._admin ? "" : "readonly"}" title="${this._admin ? "One light: A warm white, B cool white" : "Only an administrator can change this"}">
+            <input type="checkbox" data-action="tw" ${data} ${tw ? "checked" : ""} ${this._admin ? "" : "disabled"}>
+            <span class="switch"></span>Tunable white
+          </label>
+          ${tw ? this._rangeChip(master, mini, port, data) : ""}
+        </div>
       </div>`;
+  }
+
+  _cctRange(master, mini, port) {
+    const light = master.lights.find((l) => l.mini_uid === mini.uid && l.key === `port${port}t`);
+    return light?.min_kelvin && light?.max_kelvin ? [light.min_kelvin, light.max_kelvin] : CCT_DEFAULT;
+  }
+
+  _rangeChip(master, mini, port, data) {
+    const range = this._cctRange(master, mini, port);
+    const custom = range[0] !== CCT_DEFAULT[0] || range[1] !== CCT_DEFAULT[1];
+    const label = cctLabel(range);
+    return this._admin
+      ? `<button class="range ${custom ? "custom" : ""}" data-action="cct" ${data} title="Colour range of the strip on Port ${port}">${label}</button>`
+      : `<span class="range ${custom ? "custom" : ""}" title="Colour range of the strip on Port ${port}">${label}</span>`;
   }
 
   _light(master, light, hl) {
@@ -766,6 +835,10 @@ class NetroniPanel extends HTMLElement {
     this._renderDialog();
   }
 
+  _cctLabels(warm, cool) {
+    return `<span>${warm} K · A 100 %</span><span>${Math.round((warm + cool) / 2)} K · 50 / 50</span><span>${cool} K · B 100 %</span>`;
+  }
+
   _closeDialog() {
     this._dialog = null;
     this._renderDialog();
@@ -799,6 +872,30 @@ class NetroniPanel extends HTMLElement {
             ${areas.map((a) => `<option value="${esc(a.area_id)}" ${a.area_id === current ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
           </select></label>`;
       action = `<button class="btn" data-action="save-light" ${this._busy ? "disabled" : ""}>Save</button>`;
+    } else if (d.kind === "cct") {
+      const mini = this._mini(d.entry, d.uid);
+      const light = this._master(d.entry)?.lights.find((l) => l.mini_uid === d.uid && l.key === `port${d.port}t`);
+      const preset = CCT_PRESETS.findIndex((p) => p.range[0] === d.warm && p.range[1] === d.cool);
+      const selected = d.custom ? -1 : preset;
+      const locked = selected >= 0 || this._busy ? "disabled" : "";
+      title = `Colour range of Port ${d.port}T`;
+      body = `
+        <p class="sub">${esc(mini?.name)} · ${esc(light?.name || light?.default_name || `Port ${d.port}T`)} · the strip's warmest and coolest white</p>
+        <label class="field"><span>Strip</span>
+          <select id="cct-preset" ${this._busy ? "disabled" : ""}>
+            ${CCT_PRESETS.map((p, i) => `<option value="${i}" ${i === selected ? "selected" : ""}>${p.label} · ${cctLabel(p.range)}</option>`).join("")}
+            <option value="custom" ${selected < 0 ? "selected" : ""}>Custom</option>
+          </select></label>
+        <div class="field-row">
+          <label class="field"><span>Warm (A at 100 %), K</span>
+            <input id="cct-warm" type="number" min="1000" max="10000" step="50" value="${d.warm}" ${locked}></label>
+          <label class="field"><span>Cool (B at 100 %), K</span>
+            <input id="cct-cool" type="number" min="1000" max="10000" step="50" value="${d.cool}" ${locked}></label>
+        </div>
+        <div class="cct-bar"></div>
+        <div class="cct-labels" id="cct-labels">${this._cctLabels(d.warm, d.cool)}</div>
+        <p class="sub">Home Assistant, Matter and the XP-Mini use this range for this light. A colour temperature outside the new range moves to its nearest end.</p>`;
+      action = `<button class="btn" data-action="save-cct" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "pairs") {
       const mini = this._mini(d.entry, d.uid);
       title = d.make ? `Make Port ${d.port} tunable white?` : `Split Port ${d.port}T?`;
@@ -901,6 +998,18 @@ const STYLE = `
   .light-sub { font-size: 12px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; cursor: pointer; user-select: none; }
   .tw.readonly { cursor: default; }
+  .tw-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  .tw-row .tw { margin-top: 0; }
+  .range { margin-left: auto; font: inherit; font-size: 12px; white-space: nowrap; padding: 2px 8px; border-radius: 999px; cursor: pointer;
+    color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), .1); border: 1px solid rgba(var(--rgb-primary-color, 3, 169, 244), .35); }
+  span.range { cursor: default; }
+  .range.custom { color: #e65100; background: rgba(255, 152, 0, .12); border-color: rgba(255, 152, 0, .45); }
+  .field-row { display: flex; gap: 12px; }
+  .field-row .field { flex: 1; }
+  .field input:disabled { opacity: .7; }
+  .cct-bar { height: 14px; border-radius: 7px; margin-top: 16px; border: 1px solid var(--line);
+    background: linear-gradient(90deg, #ffb35c, #ffe1b8 50%, #eaf3ff); }
+  .cct-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--secondary-text-color); margin-top: 3px; }
   .tw input { position: absolute; opacity: 0; pointer-events: none; }
   .switch { position: relative; width: 32px; height: 18px; border-radius: 9px; background: rgba(127, 127, 127, .4); flex: none; transition: background .2s; }
   .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .2s; }

@@ -34,6 +34,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_subscribe,
         ws_identify,
         ws_set_pairs,
+        ws_set_cct_range,
         ws_update_light,
         ws_remove_mini,
         ws_dmx_snapshot,
@@ -101,6 +102,8 @@ def _overview(hass: HomeAssistant) -> dict:
                     "name": entry.name if entry else None,  # None: not named yet
                     "area_id": area_id,
                     "area": area_name(area_id),
+                    "min_kelvin": light.get("min_kelvin"),  # tunable white: the port's colour range
+                    "max_kelvin": light.get("max_kelvin"),
                 }
             )
         masters.append(
@@ -201,6 +204,30 @@ def _error(connection: websocket_api.ActiveConnection, msg_id: int, err: Netroni
 async def ws_identify(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     try:
         await _hub(hass, msg["entry_id"]).client.call("mini/identify", uid=msg["uid"], port=msg["port"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/set_cct_range",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("port"): vol.All(int, vol.Range(min=1, max=PORTS_PER_MINI)),
+        vol.Required("warm"): vol.All(int, vol.Range(min=1000, max=10000)),
+        vol.Required("cool"): vol.All(int, vol.Range(min=1000, max=10000)),
+    }
+)
+@websocket_api.async_response
+async def ws_set_cct_range(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Colour range of a tunable-white port (the strip's warmest and coolest white)."""
+    try:
+        await _hub(hass, msg["entry_id"]).client.call(
+            "mini/set_cct_range", uid=msg["uid"], port=msg["port"], warm=msg["warm"], cool=msg["cool"]
+        )
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return
