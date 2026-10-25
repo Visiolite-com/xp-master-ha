@@ -1047,7 +1047,7 @@ class NetroniPanel extends HTMLElement {
               const locked = other || this._busy ? "disabled" : "";
               return `<label class="member ${other ? "taken" : ""}" ${other ? `title="In ${esc(other.name)}: remove it there first"` : ""}>
                 <input type="checkbox" data-action="member" data-light="${esc(l.id)}" ${checked} ${locked}>
-                <span>${esc(l.name || l.default_name)}</span><span class="sub">${l.key.replace("port", "").toUpperCase()}${other ? ` · in ${esc(other.name)}` : ""}</span></label>`;
+                <span>${esc(l.name || l.default_name)}</span><span class="sub">${esc(mini.name)} · ${l.key.replace("port", "").toUpperCase()}${other ? ` · in ${esc(other.name)}` : ""}</span></label>`;
             })
             .join("");
           return `<div class="member-mini">${esc(mini.name)}</div>${items}`;
@@ -1212,8 +1212,9 @@ const STYLE = `
   .gr-pct b { color: var(--primary-text-color); font-weight: 500; }
   .slider { width: 100%; accent-color: var(--primary-color); }
   .slider.own { accent-color: rgba(var(--rgb-primary-color, 3, 169, 244), .55); }
-  .members { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; }
-  .member-mini { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin: 8px 0 2px; }
+  .members { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 4px; }
+  .member-mini { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin: 0 -10px; padding: 6px 10px 3px;
+    position: sticky; top: 0; z-index: 1; background: var(--card); border-bottom: 1px solid var(--line); }
   .members-block { margin-top: 14px; }
   .members-label { font-size: 12px; color: var(--secondary-text-color); margin-bottom: 4px; }
   .member { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; cursor: pointer; }
