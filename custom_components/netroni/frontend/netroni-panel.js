@@ -235,6 +235,21 @@ class NetroniPanel extends HTMLElement {
         this._openDialog({ kind: "cct", entry: d.entry, uid: d.uid, port: Number(d.port), warm: range[0], cool: range[1] });
         break;
       }
+      case "goto-group":
+        ev.stopPropagation();
+        this._tab = "groups";
+        this._stopDmxPoll();
+        this._gotoGroup = `${d.entry}|${d.group}`;
+        this._renderMain();
+        requestAnimationFrame(() =>
+          this.shadowRoot.getElementById(`group-${d.entry}-${d.group}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+        );
+        clearTimeout(this._gotoTimer);
+        this._gotoTimer = setTimeout(() => {
+          this._gotoGroup = null;
+          this._renderMain();
+        }, 2500);
+        break;
       case "new-group":
         this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [] });
         break;
@@ -823,9 +838,18 @@ class NetroniPanel extends HTMLElement {
         <div class="light-text" data-action="more-info" data-entity="${esc(light.entity_id)}" title="Brightness and colour">
           <div class="light-name ${light.name ? "" : "unnamed"}">${esc(light.name || light.default_name)}</div>
           <div class="light-sub">${tagOf(light)} · ${esc(light.area || "No area")} · ${state}</div>
+          ${this._groupChip(master, light)}
         </div>
         ${edit}
       </div>`;
+  }
+
+  /** Under a light that is in a group: the group's name; a click opens it in the Groups tab. */
+  _groupChip(master, light) {
+    const group = light.group && (master.groups || []).find((g) => g.id === light.group);
+    if (!group) return "";
+    return `<button class="group-chip" data-action="goto-group" data-entry="${master.entry_id}" data-group="${esc(group.id)}"
+      title="In the group ${esc(group.name)}: open it"><ha-icon icon="mdi:lightbulb-group-outline"></ha-icon>${esc(group.name)}</button>`;
   }
 
   _groupsCard(master) {
@@ -868,10 +892,11 @@ class NetroniPanel extends HTMLElement {
     const edit = this._admin
       ? `<button class="btn secondary" data-action="edit-group" data-entry="${master.entry_id}" data-group="${esc(group.id)}">Edit</button>`
       : "";
+    const target = this._gotoGroup === `${master.entry_id}|${group.id}` ? "target" : "";
     return `
-      <section class="card">
+      <section class="card group-card ${target}" id="group-${master.entry_id}-${esc(group.id)}">
         <div class="card-head">
-          <ha-icon class="head-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
+          <ha-icon class="head-icon group-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
           <div class="grow"><h3>${esc(group.name)}</h3>
             <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""}</div></div>
           ${edit}
@@ -995,10 +1020,13 @@ class NetroniPanel extends HTMLElement {
           const items = master.lights
             .filter((l) => l.mini_uid === mini.uid)
             .map((l) => {
+              // A light in another group can't be picked here: remove it from that group first.
               const other = l.group && l.group !== d.groupId ? master.groups.find((g) => g.id === l.group) : null;
               const checked = d.members.includes(l.id) ? "checked" : "";
-              return `<label class="member"><input type="checkbox" data-action="member" data-light="${esc(l.id)}" ${checked} ${this._busy ? "disabled" : ""}>
-                <span>${esc(l.name || l.default_name)}</span><span class="sub">${l.key.replace("port", "").toUpperCase()}${other ? ` · in ${esc(other.name)}, moves here` : ""}</span></label>`;
+              const locked = other || this._busy ? "disabled" : "";
+              return `<label class="member ${other ? "taken" : ""}" ${other ? `title="In ${esc(other.name)}: remove it there first"` : ""}>
+                <input type="checkbox" data-action="member" data-light="${esc(l.id)}" ${checked} ${locked}>
+                <span>${esc(l.name || l.default_name)}</span><span class="sub">${l.key.replace("port", "").toUpperCase()}${other ? ` · in ${esc(other.name)}` : ""}</span></label>`;
             })
             .join("");
           return `<div class="member-mini">${esc(mini.name)}</div>${items}`;
@@ -1008,7 +1036,7 @@ class NetroniPanel extends HTMLElement {
         <label class="field"><span>Name</span>
           <input id="group-name" type="text" value="${esc(typed ?? d.name)}" placeholder="Kitchen ceiling" ${this._busy ? "disabled" : ""}></label>
         <div class="members-block"><div class="members-label">Lights</div><div class="members">${byMini}</div></div>
-        <p class="sub">A light is in one group at most. Dimming the group keeps the lights' own levels relative to each other.</p>`;
+        <p class="sub">A light is in one group at most: to move one here, remove it from its group first. Dimming the group keeps the lights' own levels relative to each other.</p>`;
       action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
         <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "cct") {
@@ -1160,6 +1188,14 @@ const STYLE = `
   .members-label { font-size: 12px; color: var(--secondary-text-color); margin-bottom: 4px; }
   .member { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; cursor: pointer; }
   .member input { width: auto; margin: 0; flex: none; }
+  .group-chip { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; max-width: 100%; font: inherit; font-size: 11px;
+    padding: 1px 8px 1px 5px; border-radius: 999px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: #00796b; background: rgba(0, 150, 136, .1); border: 1px solid rgba(0, 150, 136, .4); --mdc-icon-size: 13px; }
+  .group-chip:hover { background: rgba(0, 150, 136, .18); }
+  .group-icon { color: #00897b; }
+  .group-card { transition: box-shadow .4s, border-color .4s; }
+  .group-card.target { border-color: #00897b; box-shadow: 0 0 0 3px rgba(0, 150, 136, .25); }
+  .member.taken { cursor: default; color: var(--disabled-text-color, #9e9e9e); }
   .member .sub { margin-left: auto; font-size: 12px; }
   @media (max-width: 600px) { .grow-row { grid-template-columns: 34px 1fr 90px; } .grow-row .slider { grid-column: 1 / -1; } }
   .cct-bar { height: 14px; border-radius: 7px; margin-top: 16px; border: 1px solid var(--line);
