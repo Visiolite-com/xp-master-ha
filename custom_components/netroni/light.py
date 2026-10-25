@@ -11,15 +11,15 @@ from homeassistant.components.light import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
 from .client import NetroniError
-from .const import DOMAIN, KELVIN_COOL, KELVIN_WARM
+from .const import KELVIN_COOL, KELVIN_WARM
 from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
-from .sync import async_push_label, async_restore_area
+from .sync import async_apply_group_area, async_push_label, async_restore_area
 
 
 async def async_setup_entry(
@@ -42,8 +42,10 @@ async def async_setup_entry(
 class NetroniGroupLight(LightEntity):
     """A group: on if any member is on; its brightness is the fader over the members' own levels."""
 
+    # No device: a group can span XP-Minis, and as an entity of its own it has exactly the area
+    # chosen for it (on the XP-Master device it would take that device's area).
     _attr_should_poll = False
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_icon = "mdi:lightbulb-group-outline"
@@ -52,7 +54,6 @@ class NetroniGroupLight(LightEntity):
         self.hub = hub
         self.group_id = group["id"]
         self._attr_unique_id = f"{hub.master_id}_group/{group['id']}"
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, hub.master_id)})
 
     @property
     def name(self) -> str:
@@ -77,6 +78,13 @@ class NetroniGroupLight(LightEntity):
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
+        ent_reg = er.async_get(self.hass)
+        reg_entry = ent_reg.async_get(self.entity_id)
+        if reg_entry and reg_entry.device_id:  # groups made before 0.16 sat on the XP-Master device
+            ent_reg.async_update_entity(self.entity_id, device_id=None)
+        group = self.hub.group(self.group_id) or {}
+        if group.get("area"):  # a new or rebuilt Home Assistant picks up the group's area
+            async_apply_group_area(self.hass, self.entity_id, group["area"])
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         fields: dict[str, Any] = {"on": True}

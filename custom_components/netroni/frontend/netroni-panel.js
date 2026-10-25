@@ -251,11 +251,11 @@ class NetroniPanel extends HTMLElement {
         }, 2500);
         break;
       case "new-group":
-        this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [] });
+        this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [], areaId: null, areaTouched: false });
         break;
       case "edit-group": {
         const group = this._master(d.entry)?.groups.find((g) => g.id === d.group);
-        if (group) this._openDialog({ kind: "group", entry: d.entry, groupId: group.id, name: group.name, members: [...group.members] });
+        if (group) this._openDialog({ kind: "group", entry: d.entry, groupId: group.id, name: group.name, members: [...group.members], areaId: group.area_id, areaTouched: true });
         break;
       }
       case "save-group":
@@ -298,6 +298,16 @@ class NetroniPanel extends HTMLElement {
       if (!this._dialog) return;
       const id = el.dataset.light;
       this._dialog.members = el.checked ? [...this._dialog.members, id] : this._dialog.members.filter((m) => m !== id);
+      if (!this._dialog.areaTouched) {
+        this._dialog.areaId = this._commonArea(this._dialog.entry, this._dialog.members);
+        const select = this.shadowRoot.getElementById("group-area");
+        if (select) select.value = this._dialog.areaId || "";
+      }
+      return;
+    }
+    if (el.id === "group-area") {
+      this._dialog.areaId = el.value || null;
+      this._dialog.areaTouched = true;
       return;
     }
     if (el.id === "cct-preset") {
@@ -361,9 +371,16 @@ class NetroniPanel extends HTMLElement {
       return;
     }
     d.name = name;
-    const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members };
+    const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members, area_id: d.areaId || null };
     if (d.groupId) msg.group_id = d.groupId;
     await this._run(() => this._call(msg));
+  }
+
+  /** The area all these lights share (their own or their XP-Mini's), or null. */
+  _commonArea(entry, members) {
+    const lights = (this._master(entry)?.lights || []).filter((l) => members.includes(l.id));
+    const areas = new Set(lights.map((l) => l.area_id || null));
+    return lights.length && areas.size === 1 ? [...areas][0] : null;
   }
 
   async _deleteGroup() {
@@ -728,7 +745,7 @@ class NetroniPanel extends HTMLElement {
           <ha-icon class="head-icon" icon="netroni:logo"></ha-icon>
           <div class="grow">
             <h2>${esc(master.name)}</h2>
-            <div class="sub">XP-Master · ${esc(master.master_id)}</div>
+            <div class="sub">XP-Master · ${esc(master.master_id)}${master.area ? ` · ${esc(master.area)}` : ""}</div>
           </div>
           ${this._chip(master.connected, "Connected", "Not connected")}
           ${master.device_id ? this._deviceLink(master.device_id) : ""}
@@ -898,7 +915,7 @@ class NetroniPanel extends HTMLElement {
         <div class="card-head">
           <ha-icon class="head-icon group-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
           <div class="grow"><h3>${esc(group.name)}</h3>
-            <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""}</div></div>
+            <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""} · ${esc(group.area || "No area")}</div></div>
           ${edit}
         </div>
         <div class="grow-row group-fader ${on ? "on" : ""}">
@@ -1036,6 +1053,12 @@ class NetroniPanel extends HTMLElement {
         <label class="field"><span>Name</span>
           <input id="group-name" type="text" value="${esc(typed ?? d.name)}" placeholder="Kitchen ceiling" ${this._busy ? "disabled" : ""}></label>
         <div class="members-block"><div class="members-label">Lights</div><div class="members">${byMini}</div></div>
+        <label class="field"><span>Area${d.areaTouched ? "" : " (the lights' area, if they share one)"}</span>
+          <select id="group-area" ${this._busy ? "disabled" : ""}>
+            <option value="">No area</option>
+            ${Object.values(this._hass.areas || {}).sort((a, b) => a.name.localeCompare(b.name))
+              .map((a) => `<option value="${esc(a.area_id)}" ${a.area_id === d.areaId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
+          </select></label>
         <p class="sub">A light is in one group at most: to move one here, remove it from its group first. Dimming the group keeps the lights' own levels relative to each other.</p>`;
       action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
         <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
@@ -1268,4 +1291,5 @@ const STYLE = `
   @media (max-width: 420px) { .ports { grid-template-columns: 1fr; } }
 `;
 
-customElements.define("netroni-panel", NetroniPanel);
+// A page that loaded an older version keeps that one until it is reloaded.
+if (!customElements.get("netroni-panel")) customElements.define("netroni-panel", NetroniPanel);

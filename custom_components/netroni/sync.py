@@ -38,6 +38,36 @@ def async_restore_area(hass: HomeAssistant, entity_id: str, area_name: str | Non
     ent_reg.async_update_entity(entity_id, area_id=area.id)
 
 
+@callback
+def async_apply_group_area(hass: HomeAssistant, entity_id: str, area_name: str | None) -> None:
+    """Give a group's entity the area stored with the group (None: no area)."""
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get(entity_id)
+    if entry is None:
+        return
+    area_id = ar.async_get(hass).async_get_or_create(area_name).id if area_name else None
+    if entry.area_id != area_id:
+        ent_reg.async_update_entity(entity_id, area_id=area_id)
+
+
+async def async_push_group_area(hass: HomeAssistant, hub: NetroniHub, entity_id: str) -> None:
+    """The user moved a group's entity to another area in Home Assistant: store it on the XP-Master."""
+    reg_entry = er.async_get(hass).async_get(entity_id)
+    prefix = f"{hub.master_id}_group/"
+    if reg_entry is None or not reg_entry.unique_id.startswith(prefix):
+        return
+    group_id = reg_entry.unique_id.removeprefix(prefix)
+    group = hub.group(group_id)
+    area = ar.async_get(hass).async_get_area(reg_entry.area_id) if reg_entry.area_id else None
+    area_name = area.name if area else None
+    if group is None or group.get("area") == area_name:
+        return
+    try:
+        await hub.client.call("group/update", group_id=group_id, area=area_name)
+    except NetroniError as err:
+        _LOGGER.warning("could not store the area of %s on the XP-Master: %s", entity_id, err)
+
+
 async def async_push_label(hass: HomeAssistant, hub: NetroniHub, entity_id: str) -> None:
     """Store a light's HA name and area on the Master if they differ from what it has."""
     reg_entry = er.async_get(hass).async_get(entity_id)
@@ -85,6 +115,13 @@ def async_setup_label_sync(
     def on_entity_update(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
         data = event.data
         if data["action"] != "update" or not ({"name", "area_id"} & set(data["changes"])):
+            return
+        reg_entry = ent_reg.async_get(data["entity_id"])
+        if reg_entry and reg_entry.unique_id.startswith(f"{hub.master_id}_group/"):
+            if "area_id" in data["changes"]:
+                entry.async_create_background_task(
+                    hass, async_push_group_area(hass, hub, data["entity_id"]), "netroni push group area"
+                )
             return
         if data["entity_id"] in light_entities():
             entry.async_create_background_task(hass, push(data["entity_id"]), "netroni push label")

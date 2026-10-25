@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_call_later
 from .client import CommandError, NetroniError
 from .const import DOMAIN, PORTS_PER_MINI, SIGNAL_HUBS_CHANGED
 from .hub import ALL_MINIS, NetroniHub
+from .sync import async_apply_group_area
 from .matter import async_open_window, format_manual_code, qr_placeholders
 
 UPDATE_DELAY = 0.3  # s: coalesce bursts (a pairing change touches many entities) into one update
@@ -109,15 +110,21 @@ def _overview(hass: HomeAssistant) -> dict:
                     "group": light.get("group"),
                 }
             )
-        groups = [
-            {
-                "id": group["id"],
-                "name": group["name"],
-                "members": group.get("members", []),
-                "entity_id": ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{group['id']}"),
-            }
-            for group in hub.config.get("groups", [])
-        ]
+        groups = []
+        for group in hub.config.get("groups", []):
+            entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{group['id']}")
+            entry = ent_reg.async_get(entity_id) if entity_id else None
+            groups.append(
+                {
+                    "id": group["id"],
+                    "name": group["name"],
+                    "members": group.get("members", []),
+                    "entity_id": entity_id,
+                    "area_id": entry.area_id if entry else None,
+                    "area": area_name(entry.area_id) if entry else group.get("area"),
+                }
+            )
+        master_device = dev_reg.async_get(hub.master_device_id) if hub.master_device_id else None
         masters.append(
             {
                 "entry_id": hub.entry.entry_id,
@@ -127,6 +134,7 @@ def _overview(hass: HomeAssistant) -> dict:
                 "connected": hub.available,
                 "config_version": hub.config.get("version"),
                 "device_id": hub.master_device_id,
+                "area": area_name(master_device.area_id) if master_device else None,
                 "ports_per_mini": PORTS_PER_MINI,
                 "minis": minis,
                 "lights": lights,
@@ -231,21 +239,30 @@ async def ws_identify(hass: HomeAssistant, connection: websocket_api.ActiveConne
         vol.Optional("group_id"): str,  # absent: a new group
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
         vol.Required("members"): [str],
+        vol.Optional("area_id"): vol.Any(str, None),  # None: no area
     }
 )
 @websocket_api.async_response
 async def ws_group_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Create a group, or change its name and members (a light in another group moves here)."""
-    client = _hub(hass, msg["entry_id"]).client
+    hub = _hub(hass, msg["entry_id"])
+    area = ar.async_get(hass).async_get_area(msg["area_id"]) if msg.get("area_id") else None
+    area_name = area.name if area else None
     try:
         if "group_id" in msg:
-            await client.call("group/update", group_id=msg["group_id"], name=msg["name"], members=msg["members"])
+            await hub.client.call(
+                "group/update", group_id=msg["group_id"], name=msg["name"], members=msg["members"], area=area_name
+            )
             result = {"group_id": msg["group_id"]}
         else:
-            result = await client.call("group/create", name=msg["name"], members=msg["members"])
+            result = await hub.client.call("group/create", name=msg["name"], members=msg["members"], area=area_name)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return
+    # The entity of an existing group moves now; a new one gets the area when it appears.
+    entity_id = er.async_get(hass).async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{result['group_id']}")
+    if entity_id:
+        async_apply_group_area(hass, entity_id, area_name)
     connection.send_result(msg["id"], result)
 
 
