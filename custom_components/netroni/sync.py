@@ -39,6 +39,31 @@ def async_restore_area(hass: HomeAssistant, entity_id: str, area_name: str | Non
 
 
 @callback
+def async_update_hidden(hass: HomeAssistant, hub: NetroniHub) -> None:
+    """Hide the lights of groups set to "hide its lights", show them again otherwise.
+
+    Hidden on the integration's behalf, so only those are ever shown again: a light the user
+    hid by hand stays hidden."""
+    ent_reg = er.async_get(hass)
+    hidden = {
+        member
+        for group in hub.config.get("groups", [])
+        if group.get("hide_members", True)
+        for member in group.get("members", [])
+    }
+    prefix = f"{hub.master_id}_"
+    for light in hub.config.get("lights", []):
+        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, prefix + light["id"])
+        entry = ent_reg.async_get(entity_id) if entity_id else None
+        if entry is None:
+            continue
+        if light["id"] in hidden and entry.hidden_by is None:
+            ent_reg.async_update_entity(entity_id, hidden_by=er.RegistryEntryHider.INTEGRATION)
+        elif light["id"] not in hidden and entry.hidden_by is er.RegistryEntryHider.INTEGRATION:
+            ent_reg.async_update_entity(entity_id, hidden_by=None)
+
+
+@callback
 def async_apply_group_area(hass: HomeAssistant, entity_id: str, area_name: str | None) -> None:
     """Give a group's entity the area stored with the group (None: no area)."""
     ent_reg = er.async_get(hass)

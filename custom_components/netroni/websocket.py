@@ -121,6 +121,7 @@ def _overview(hass: HomeAssistant) -> dict:
                     "members": group.get("members", []),
                     "entity_id": entity_id,
                     "area_id": entry.area_id if entry else None,
+                    "hide_members": group.get("hide_members", True),
                     "area": area_name(entry.area_id) if entry else group.get("area"),
                 }
             )
@@ -240,6 +241,7 @@ async def ws_identify(hass: HomeAssistant, connection: websocket_api.ActiveConne
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
         vol.Required("members"): [str],
         vol.Optional("area_id"): vol.Any(str, None),  # None: no area
+        vol.Optional("hide_members", default=True): bool,
     }
 )
 @websocket_api.async_response
@@ -251,11 +253,14 @@ async def ws_group_save(hass: HomeAssistant, connection: websocket_api.ActiveCon
     try:
         if "group_id" in msg:
             await hub.client.call(
-                "group/update", group_id=msg["group_id"], name=msg["name"], members=msg["members"], area=area_name
+                "group/update", group_id=msg["group_id"], name=msg["name"], members=msg["members"], area=area_name,
+                hide_members=msg["hide_members"],
             )
             result = {"group_id": msg["group_id"]}
         else:
-            result = await hub.client.call("group/create", name=msg["name"], members=msg["members"], area=area_name)
+            result = await hub.client.call(
+                "group/create", name=msg["name"], members=msg["members"], area=area_name, hide_members=msg["hide_members"]
+            )
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

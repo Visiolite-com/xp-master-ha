@@ -82,7 +82,14 @@ class NetroniHub:
         if changed:  # e.g. an XP-Mini added while we were disconnected
             self._apply_structure()
         self.async_update_offline_issues()
+        self._update_hidden()
         self._notify()
+
+    @callback
+    def _update_hidden(self) -> None:
+        from .sync import async_update_hidden  # avoid an import cycle
+
+        async_update_hidden(self.hass, self)
 
     async def _group_states(self) -> dict:
         try:
@@ -191,6 +198,7 @@ class NetroniHub:
         self.config = config
         if changed:
             self._apply_structure()
+        self._update_hidden()
         self._notify()
 
     @callback

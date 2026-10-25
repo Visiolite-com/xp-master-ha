@@ -251,11 +251,11 @@ class NetroniPanel extends HTMLElement {
         }, 2500);
         break;
       case "new-group":
-        this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [], areaId: null, areaTouched: false });
+        this._openDialog({ kind: "group", entry: d.entry, groupId: null, name: "", members: [], areaId: null, areaTouched: false, hideMembers: true });
         break;
       case "edit-group": {
         const group = this._master(d.entry)?.groups.find((g) => g.id === d.group);
-        if (group) this._openDialog({ kind: "group", entry: d.entry, groupId: group.id, name: group.name, members: [...group.members], areaId: group.area_id, areaTouched: true });
+        if (group) this._openDialog({ kind: "group", entry: d.entry, groupId: group.id, name: group.name, members: [...group.members], areaId: group.area_id, areaTouched: true, hideMembers: group.hide_members !== false });
         break;
       }
       case "save-group":
@@ -303,6 +303,10 @@ class NetroniPanel extends HTMLElement {
         const select = this.shadowRoot.getElementById("group-area");
         if (select) select.value = this._dialog.areaId || "";
       }
+      return;
+    }
+    if (el.id === "group-hide") {
+      this._dialog.hideMembers = el.checked;
       return;
     }
     if (el.id === "group-area") {
@@ -371,7 +375,7 @@ class NetroniPanel extends HTMLElement {
       return;
     }
     d.name = name;
-    const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members, area_id: d.areaId || null };
+    const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members, area_id: d.areaId || null, hide_members: d.hideMembers !== false };
     if (d.groupId) msg.group_id = d.groupId;
     await this._run(() => this._call(msg));
   }
@@ -1059,6 +1063,9 @@ class NetroniPanel extends HTMLElement {
             ${Object.values(this._hass.areas || {}).sort((a, b) => a.name.localeCompare(b.name))
               .map((a) => `<option value="${esc(a.area_id)}" ${a.area_id === d.areaId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
           </select></label>
+        <label class="tw hide-row"><input type="checkbox" id="group-hide" ${d.hideMembers !== false ? "checked" : ""} ${this._busy ? "disabled" : ""}>
+          <span class="switch"></span>Show only the group in Home Assistant and Matter apps</label>
+        <p class="sub hide-note">Its lights are hidden on the Home Assistant dashboards (still usable in automations) and left out of SmartThings, Google Home and other Matter apps.</p>
         <p class="sub">A light is in one group at most: to move one here, remove it from its group first. Dimming the group keeps the lights' own levels relative to each other.</p>`;
       action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
         <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
@@ -1218,6 +1225,8 @@ const STYLE = `
   .group-icon { color: #00897b; }
   .group-card { transition: box-shadow .4s, border-color .4s; }
   .group-card.target { border-color: #00897b; box-shadow: 0 0 0 3px rgba(0, 150, 136, .25); }
+  .hide-row { margin-top: 16px; color: var(--primary-text-color); font-size: 14px; }
+  .hide-note { margin-top: 4px; }
   .member.taken { cursor: default; color: var(--disabled-text-color, #9e9e9e); }
   .member .sub { margin-left: auto; font-size: 12px; }
   @media (max-width: 600px) { .grow-row { grid-template-columns: 34px 1fr 90px; } .grow-row .slider { grid-column: 1 / -1; } }

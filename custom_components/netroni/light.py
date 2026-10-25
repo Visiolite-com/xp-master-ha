@@ -19,7 +19,7 @@ from .client import NetroniError
 from .const import KELVIN_COOL, KELVIN_WARM
 from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
-from .sync import async_apply_group_area, async_push_label, async_restore_area
+from .sync import async_apply_group_area, async_push_label, async_restore_area, async_update_hidden
 
 
 async def async_setup_entry(
@@ -152,6 +152,7 @@ class NetroniLight(NetroniEntity, LightEntity):
         # Master -> HA first (a fresh HA picks up the stored area), then HA -> Master
         # (a new light inheriting its XP-Mini's area gets that area recorded).
         async_restore_area(self.hass, self.entity_id, light.get("area"))
+        async_update_hidden(self.hass, self.hub)  # a new light in a group that hides its lights
         self.hub.entry.async_create_background_task(
             self.hass, async_push_label(self.hass, self.hub, self.entity_id), "netroni push label"
         )
