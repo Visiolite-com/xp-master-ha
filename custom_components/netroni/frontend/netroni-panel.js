@@ -1197,7 +1197,7 @@ class NetroniPanel extends HTMLElement {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
       title = `Reset ${name} to factory settings?`;
-      body = `<p>${name} (${esc(d.uid)}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again at once as a new XP-Mini, with default light names, no areas and the first free DMX block.</p>
+      body = `<p>${name} (${esc(d.uid)}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again as a new XP-Mini, with default light names, no areas and the first free DMX block.</p>
         <p class="sub">Automations, scenes and dashboards that use its lights may have to be updated. To restart it without losing anything, use Restart instead.</p>`;
       action = `<button class="btn danger" data-action="confirm-reset" ${this._busy ? "disabled" : ""}>Factory reset</button>`;
     } else if (d.kind === "replace") {
