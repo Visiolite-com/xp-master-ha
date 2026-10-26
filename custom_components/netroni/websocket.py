@@ -145,6 +145,12 @@ def _overview(hass: HomeAssistant) -> dict:
                 "host": hub.entry.data[CONF_HOST],
                 "connected": hub.available,
                 "config_version": hub.config.get("version"),
+                # XP-Master release and updates (the Firmware update entity has the details)
+                "release": hub.update_status.get("installed"),
+                "update_available": (hub.update_status.get("latest") or {}).get("release")
+                if hub.update_status.get("update_available") else None,
+                "update_state": hub.update_status.get("state"),
+                "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.master_id}_firmware"),
                 "device_id": hub.master_device_id,
                 "area": area_name(master_device.area_id) if master_device else None,
                 "ports_per_mini": PORTS_PER_MINI,

@@ -28,7 +28,7 @@ from .panel import PANEL_URL_PATH, async_setup_panel
 from .sync import async_setup_label_sync
 from .websocket import async_setup_websocket
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT, Platform.UPDATE]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -84,6 +84,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         model="XP-Master",
         name=hub.master.get("name", "XP-Master"),
         serial_number=hub.master_id,
+        sw_version=hub.update_status.get("installed"),  # the XP-Master release
         configuration_url=f"homeassistant://{PANEL_URL_PATH}",
     )
     hub.master_device_id = master_device.id

@@ -823,10 +823,23 @@ class NetroniPanel extends HTMLElement {
           ${this._fact("XP-Minis", `${master.minis.length}${offline ? ` <span class="warn-text">(${offline} offline)</span>` : ""}`)}
           ${this._fact("Lights", master.lights.length)}
           ${this._fact("Tunable-white ports", tw)}
-          ${this._fact("Configuration", master.config_version ? `version ${master.config_version}` : "—")}
+          ${this._fact("Firmware", this._firmware(master))}
         </div>
       </section>`;
     return head + master.minis.map((mini) => this._miniCard(master, mini)).join("");
+  }
+
+  _firmware(master) {
+    const release = master.release ? esc(master.release) : "—";
+    let extra = "";
+    if (master.update_state === "downloading" || master.update_state === "installing") extra = "updating…";
+    else if (master.update_state === "failed") extra = "update failed";
+    else if (master.update_available) extra = `${esc(master.update_available)} available`;
+    if (!extra) return release;
+    const label = master.firmware_entity
+      ? `<a class="fact-link" data-action="more-info" data-entity="${esc(master.firmware_entity)}">${extra}</a>`
+      : extra;
+    return `${release} · ${label}`;
   }
 
   _deviceLink(deviceId) {
@@ -1272,6 +1285,8 @@ const STYLE = `
   .facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 14px 0 2px; }
   .fact-label { font-size: 12px; color: var(--secondary-text-color); }
   .fact-value { font-size: 14px; margin-top: 2px; }
+  .fact-link { color: var(--primary-color); cursor: pointer; text-decoration: none; }
+  .fact-link:hover { text-decoration: underline; }
   .banner { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border-radius: 10px; line-height: 1.4; }
   .banner.warn { background: rgba(255, 166, 0, .14); }
   .banner.warn > ha-icon { color: var(--warn); }

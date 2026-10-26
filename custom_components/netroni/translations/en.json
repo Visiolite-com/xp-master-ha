@@ -35,7 +35,8 @@
           "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
           "restart": "Restart an XP-Mini",
           "factory_reset": "Factory reset an XP-Mini",
-          "replace": "Replace an XP-Mini"
+          "replace": "Replace an XP-Mini",
+          "updates": "XP-Master updates"
         }
       },
       "tunable_white": {
@@ -85,6 +86,13 @@
       "restart": {
         "title": "Restart an XP-Mini",
         "description": "Pick the XP-Mini to restart. It keeps all its settings and is back within a few seconds; its lights may flicker off meanwhile. Each XP-Mini also has a Restart button on its device page."
+      },
+      "updates": {
+        "title": "XP-Master updates",
+        "description": "This XP-Master runs release {installed}. New releases appear under Settings → Updates; nothing is installed until you press Install.\n\nBeta releases come earlier and are less tested: for test and demo installations.",
+        "data": {
+          "beta": "Beta releases"
+        }
       }
     },
     "abort": {
@@ -104,7 +112,10 @@
       "replace_failed": "The XP-Mini was not replaced: {error}",
       "replace_done": "{old} now runs on the new XP-Mini.",
       "restart_done": "{mini} is restarting.",
-      "restart_failed": "The XP-Mini was not restarted: {error}"
+      "restart_failed": "The XP-Mini was not restarted: {error}",
+      "updates_unsupported": "This XP-Master's Netroni service does not support updates yet.",
+      "updates_beta": "This XP-Master now gets beta releases.",
+      "updates_stable": "This XP-Master now gets stable releases only."
     }
   },
   "entity": {
@@ -131,6 +142,11 @@
     "binary_sensor": {
       "connection": {
         "name": "Connection"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
       }
     }
   },

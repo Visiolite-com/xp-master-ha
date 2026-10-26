@@ -135,7 +135,28 @@ class NetroniOptionsFlow(OptionsFlow):
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
         return self.async_show_menu(
-            step_id="init", menu_options=["tunable_white", "matter", "restart", "replace", "factory_reset"]
+            step_id="init", menu_options=["tunable_white", "matter", "restart", "replace", "factory_reset", "updates"]
+        )
+
+    # --- XP-Master updates: stable or beta releases ---
+
+    async def async_step_updates(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        status = self._hub.update_status
+        if not status:
+            return self.async_abort(reason="updates_unsupported")
+        if user_input is not None:
+            channel = "beta" if user_input["beta"] else "stable"
+            try:
+                self._hub.update_status = await self._hub.client.call("update/set_channel", channel=channel)
+                if channel != status.get("channel"):
+                    self._hub.update_status = await self._hub.client.call("update/check")
+            except NetroniError as err:
+                return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
+            return self.async_abort(reason=f"updates_{channel}")
+        return self.async_show_form(
+            step_id="updates",
+            data_schema=vol.Schema({vol.Required("beta", default=status.get("channel") == "beta"): bool}),
+            description_placeholders={"installed": status.get("installed") or "unknown"},
         )
 
     # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".

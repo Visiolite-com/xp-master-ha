@@ -37,6 +37,7 @@ class NetroniHub:
         self.config: dict = {}
         self.states: dict[str, dict] = {}
         self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
+        self.update_status: dict = {}  # XP-Master updates (update/status); empty: not supported
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
@@ -72,6 +73,7 @@ class NetroniHub:
             config = await self.client.call("get_config")
             states = await self.client.call("get_state")
             group_states = await self._group_states()
+            update_status = await self._update_status()
             await self.client.call("subscribe")
         except (CannotConnect, CommandError):
             await self.client.close()
@@ -79,6 +81,7 @@ class NetroniHub:
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         self.master, self.config, self.states = hello["master"], config, states
         self.group_states = group_states
+        self.update_status = update_status
         self.available = True
         if changed:  # e.g. an XP-Mini added while we were disconnected
             self._apply_structure()
@@ -91,6 +94,12 @@ class NetroniHub:
         from .sync import async_update_hidden  # avoid an import cycle
 
         async_update_hidden(self.hass, self)
+
+    async def _update_status(self) -> dict:
+        try:
+            return await self.client.call("update/status")
+        except CommandError:  # a Netroni service from before updates, or updates disabled
+            return {}
 
     async def _group_states(self) -> dict:
         try:
@@ -120,6 +129,7 @@ class NetroniHub:
         """Unique ids of every entity the current configuration should have."""
         prefix = f"{self.master_id}_"
         ids = {prefix + light["id"] for light in self.config.get("lights", [])}
+        ids.add(f"{prefix}firmware")
         ids.update(f"{prefix}group/{group['id']}" for group in self.config.get("groups", []))
         for mini in self.config.get("minis", []):
             ids.update(
@@ -166,6 +176,12 @@ class NetroniHub:
                 self.async_update_offline_issues()
                 self._notify()
             # An XP-Mini new to the configuration arrives with config_changed.
+        elif event == "update_status":
+            release = self.update_status.get("installed")
+            self.update_status = data
+            if data.get("installed") != release and self.master_device_id:
+                dr.async_get(self.hass).async_update_device(self.master_device_id, sw_version=data.get("installed"))
+            self._notify()
         elif event == "port_identified":
             from .identify import async_notify_port_identified  # avoid an import cycle
 
