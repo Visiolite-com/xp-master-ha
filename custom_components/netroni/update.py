@@ -20,7 +20,7 @@ from .client import CommandError, NetroniError
 from .const import DOMAIN
 from .hub import NetroniHub
 
-BRIDGE_NOTE = "This update includes the bridge firmware: the lights go off for a few seconds while it is installed."
+BRIDGE_NOTE = "This update includes the bridge firmware: the lights don't respond for a few seconds while it is installed."
 
 
 async def async_setup_entry(
