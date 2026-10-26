@@ -132,7 +132,7 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
-        return self.async_show_menu(step_id="init", menu_options=["tunable_white", "matter"])
+        return self.async_show_menu(step_id="init", menu_options=["tunable_white", "matter", "factory_reset"])
 
     # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".
 
@@ -183,20 +183,54 @@ class NetroniOptionsFlow(OptionsFlow):
         return self.async_show_menu(step_id="tunable_white", menu_options=options)
 
     def __getattr__(self, name: str):
-        """Menu entries mini_0, mini_1, ... of "Configure ports": one step per XP-Mini."""
-        prefix = "async_step_mini_"
-        if name.startswith(prefix) and name[len(prefix):].isdigit():
-            index = int(name[len(prefix):])
+        """Menu entries mini_0, mini_1, ... of "Configure ports" and reset_0, ... of "Factory reset":
+        one step per XP-Mini."""
+        for prefix, next_step in (("async_step_mini_", "async_step_ports"), ("async_step_reset_", "async_step_reset_confirm")):
+            if name.startswith(prefix) and name[len(prefix):].isdigit():
+                index = int(name[len(prefix):])
 
-            async def step(user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-                minis = self._hub.config.get("minis", [])
-                if index >= len(minis):
-                    return self.async_abort(reason="mini_gone")
-                self._uid = minis[index]["uid"]
-                return await self.async_step_ports()
+                async def step(user_input: dict[str, Any] | None = None, index=index, next_step=next_step) -> ConfigFlowResult:
+                    minis = self._hub.config.get("minis", [])
+                    if index >= len(minis):
+                        return self.async_abort(reason="mini_gone")
+                    self._uid = minis[index]["uid"]
+                    return await getattr(self, next_step)()
 
-            return step
+                return step
         raise AttributeError(name)
+
+    # --- Factory reset ---
+
+    async def async_step_factory_reset(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        options = {
+            f"reset_{index}": f"{mini['name']} ({mini['uid']})"
+            for index, mini in enumerate(self._hub.config.get("minis", []))
+            if mini.get("online", True)
+        }
+        if not options:
+            return self.async_abort(reason="no_online_minis")
+        options["init"] = "Back"
+        return self.async_show_menu(step_id="factory_reset", menu_options=options)
+
+    async def async_step_reset_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        mini = self._hub.mini(self._uid)
+        if mini is None:
+            return self.async_abort(reason="mini_gone")
+        if user_input is not None:
+            try:
+                result = await self._hub.client.call("mini/factory_reset", uid=self._uid)
+            except NetroniError as err:
+                return self.async_abort(reason="reset_failed", description_placeholders={"error": str(err)})
+            if result.get("found_again"):
+                return self.async_abort(
+                    reason="reset_done", description_placeholders={"mini": mini["name"], "dmx": str(result["dmx_start"])}
+                )
+            return self.async_abort(reason="reset_done_gone", description_placeholders={"mini": mini["name"]})
+        return self.async_show_form(
+            step_id="reset_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={"mini": mini["name"], "uid": self._uid},
+        )
 
     async def async_step_ports(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         mini = self._hub.mini(self._uid)

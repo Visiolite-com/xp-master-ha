@@ -1,4 +1,6 @@
-"""Commissioning: an identify button per XP-Mini port (Port nA and nB flash)."""
+"""Commissioning: an identify button per XP-Mini port (Port nA and nB flash), and a restart button
+per XP-Mini (it keeps its settings). Factory reset is not a button (see config_flow.py): automations,
+scenes and voice assistants can press buttons."""
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
@@ -25,9 +27,15 @@ async def async_setup_entry(
         hub,
         async_add_entities,
         lambda config: {
-            f"{m['uid']}/{port}": (lambda uid=m["uid"], port=port: IdentifyPortButton(hub, uid, port))
-            for m in config.get("minis", [])
-            for port in range(1, PORTS_PER_MINI + 1)
+            **{
+                f"{m['uid']}/{port}": (lambda uid=m["uid"], port=port: IdentifyPortButton(hub, uid, port))
+                for m in config.get("minis", [])
+                for port in range(1, PORTS_PER_MINI + 1)
+            },
+            **{
+                f"{m['uid']}/restart": (lambda uid=m["uid"]: RestartMiniButton(hub, uid))
+                for m in config.get("minis", [])
+            },
         },
     )
 
@@ -56,5 +64,28 @@ class IdentifyPortButton(NetroniEntity, ButtonEntity):
             if err.code == "offline":
                 raise HomeAssistantError(f"Cannot identify: {str(err).split(': ', 1)[-1]}") from err
             raise HomeAssistantError(f"XP-Master rejected identify: {err}") from err
+        except NetroniError as err:
+            raise HomeAssistantError(f"Cannot reach the XP-Master: {err}") from err
+
+
+class RestartMiniButton(NetroniEntity, ButtonEntity):
+    _attr_device_class = ButtonDeviceClass.RESTART
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "restart"
+
+    def __init__(self, hub: NetroniHub, mini_uid: str) -> None:
+        super().__init__(hub, mini_uid, f"{mini_uid}/restart")
+
+    @property
+    def available(self) -> bool:
+        return True  # as IdentifyPortButton: refused with a message while the XP-Mini is offline
+
+    async def async_press(self) -> None:
+        try:
+            await self.hub.client.call("mini/restart", uid=self.mini_uid)
+        except CommandError as err:
+            if err.code == "offline":
+                raise HomeAssistantError(f"Cannot restart: {str(err).split(': ', 1)[-1]}") from err
+            raise HomeAssistantError(f"XP-Master rejected the restart: {err}") from err
         except NetroniError as err:
             raise HomeAssistantError(f"Cannot reach the XP-Master: {err}") from err

@@ -32,7 +32,8 @@
         "title": "XP-Master Configuration",
         "menu_options": {
           "tunable_white": "Configure ports",
-          "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home"
+          "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
+          "factory_reset": "Factory reset an XP-Mini"
         }
       },
       "tunable_white": {
@@ -58,6 +59,14 @@
         "title": "Pair with a Matter app",
         "description": "In SmartThings, Google Home, Alexa or Apple Home, choose to add a Matter device and scan this code:\n\n![Matter pairing QR code]({qr})\n\nOr enter the setup code **{code}**.\n\n{window}",
         "submit": "Done"
+      },
+      "factory_reset": {
+        "title": "Factory reset an XP-Mini",
+        "description": "Pick the XP-Mini to reset. Only connected XP-Minis are listed: to forget one that was taken away, delete its device instead."
+      },
+      "reset_confirm": {
+        "title": "Reset {mini} to factory settings?",
+        "description": "{mini} ({uid}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again at once as a new XP-Mini, with default light names, no areas and the first free DMX block. Automations, scenes and dashboards that use its lights may have to be updated.\n\nTo restart it without losing anything, use its Restart button instead.\n\nSubmit to reset."
       }
     },
     "abort": {
@@ -68,13 +77,20 @@
       "matter_unavailable": "The Matter bridge of the XP-Master is not running.",
       "matter_starting": "The Matter bridge of the XP-Master is starting. Try again in a minute.",
       "matter_failed": "Matter pairing failed: {error}",
-      "matter_done": "The new app can pair with the XP-Master for 3 minutes, using the QR code or the setup code."
+      "matter_done": "The new app can pair with the XP-Master for 3 minutes, using the QR code or the setup code.",
+      "no_online_minis": "No XP-Mini is connected.",
+      "reset_failed": "The XP-Mini was not reset: {error}",
+      "reset_done": "{mini} was reset. It is back as a new XP-Mini at DMX {dmx}.",
+      "reset_done_gone": "{mini} was reset. It has not been found again yet; it appears as a new XP-Mini once it is."
     }
   },
   "entity": {
     "button": {
       "identify_port": {
         "name": "Identify Port {port}"
+      },
+      "restart": {
+        "name": "Restart"
       }
     },
     "event": {

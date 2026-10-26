@@ -125,6 +125,7 @@ class NetroniHub:
                 f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
             )
             ids.add(f"{prefix}{mini['uid']}/port_identified")
+            ids.add(f"{prefix}{mini['uid']}/restart")
             ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 

@@ -97,6 +97,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
     return True
 
 
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: NetroniConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Home Assistant's "Delete" on an XP-Mini's device page: the XP-Master forgets it (lights, names,
+    DMX block). Only for an XP-Mini that was disconnected; a connected one would be found again at
+    once, so that is refused (Factory reset, under Configure, is for that)."""
+    hub = entry.runtime_data
+    uid = next((ident[1] for ident in device.identifiers if ident[0] == DOMAIN), None)
+    if uid is None or uid == hub.master_id:
+        raise HomeAssistantError("The XP-Master itself cannot be deleted; delete the integration entry instead")
+    mini = hub.mini(uid)
+    if mini is None:
+        return True  # the XP-Master no longer has it
+    if mini.get("online", True):
+        raise HomeAssistantError(
+            f"{mini['name']} is still connected. Disconnect it first, or use Factory reset (Configure) "
+            "to start it afresh."
+        )
+    try:
+        await hub.client.call("mini/remove", uid=uid)
+    except NetroniError as err:
+        raise HomeAssistantError(f"The XP-Master did not remove {mini['name']}: {err}") from err
+    return True
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:

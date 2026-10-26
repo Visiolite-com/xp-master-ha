@@ -9,7 +9,7 @@ over its local WebSocket API and pushes updates instantly (`local_push`).
 | Device | Entities |
 | --- | --- |
 | XP-Master | Parent device |
-| XP-Mini (one per unit on the Visio-Link segment) | The port lights below and **Identify Port 1–8** buttons |
+| XP-Mini (one per unit on the Visio-Link segment) | The port lights below, **Identify Port 1–8** buttons and a **Restart** button. *Delete* on its device page forgets an XP-Mini that was disconnected; **Configure → Factory reset an XP-Mini** wipes a connected one (it comes back as a new XP-Mini). |
 
 | Light | Kind | Behaviour |
 | --- | --- | --- |
