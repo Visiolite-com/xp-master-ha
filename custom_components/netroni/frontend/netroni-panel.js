@@ -237,7 +237,11 @@ class NetroniPanel extends HTMLElement {
       case "confirm-remove":
         this._removeMini();
         break;
+      case "mini-actions":
+        this._openDialog({ kind: "mini-actions", entry: d.entry, uid: d.uid });
+        break;
       case "restart":
+        this._closeDialog();
         this._restartMini(d.entry, d.uid);
         break;
       case "reset":
@@ -844,13 +848,9 @@ class NetroniPanel extends HTMLElement {
             : ""
         )
       : "";
-    const actions =
-      mini.online && this._admin
-        ? `<div class="actions mini-actions">
-            <button class="btn secondary" data-action="restart" ${data}><ha-icon icon="mdi:restart"></ha-icon> Restart</button>
-            <button class="btn secondary danger-text" data-action="reset" ${data}><ha-icon icon="mdi:backup-restore"></ha-icon> Factory reset…</button>
-          </div>`
-        : "";
+    const gear = this._admin
+      ? `<button class="icon-btn" data-action="mini-actions" ${data} title="Restart, factory reset, replace or remove"><ha-icon icon="mdi:cog-outline"></ha-icon></button>`
+      : "";
     return `
       <section class="card mini ${mini.online ? "" : "offline"} ${this._focused === mini.uid ? "focused" : ""}" id="mini-${esc(mini.uid)}">
         <div class="card-head">
@@ -860,6 +860,7 @@ class NetroniPanel extends HTMLElement {
             <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.hardware_uid && mini.hardware_uid !== mini.uid ? ` (unit ${esc(mini.hardware_uid)})` : ""}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
           </div>
           ${this._chip(mini.online, "Online", "Offline")}
+          ${gear}
           ${mini.device_id ? this._deviceLink(mini.device_id) : ""}
         </div>
         <div class="facts">
@@ -867,7 +868,7 @@ class NetroniPanel extends HTMLElement {
           ${this._fact("Firmware", esc(mini.firmware || "—"))}
           ${this._fact("Tunable-white ports", mini.pairs.length ? mini.pairs.map((p) => `${p}T`).join(", ") : "none")}
         </div>
-        ${offline}${actions}
+        ${offline}
         <div class="ports">${ports}</div>
       </section>`;
   }
@@ -1177,6 +1178,21 @@ class NetroniPanel extends HTMLElement {
       body = `<p>${esc(mini?.name || d.uid)} (${esc(d.uid)}) is removed from the XP-Master: its lights, names and DMX block are deleted.</p>
         <p class="sub">If it is connected again later, it will be added as a new XP-Mini.</p>`;
       action = `<button class="btn danger" data-action="confirm-remove" ${this._busy ? "disabled" : ""}>Remove XP-Mini</button>`;
+    } else if (d.kind === "mini-actions") {
+      const master = this._master(d.entry);
+      const mini = this._mini(d.entry, d.uid);
+      const data = `data-entry="${d.entry}" data-uid="${esc(d.uid)}"`;
+      const spares = (master?.minis || []).some((m) => m.online && m.uid !== d.uid);
+      const item = (action, icon, label, text, enabled, danger = false) => `
+        <button class="menu-item ${danger ? "danger-text" : ""}" data-action="${action}" ${data} ${enabled ? "" : "disabled"}>
+          <ha-icon icon="${icon}"></ha-icon><span><b>${label}</b><span class="sub">${text}</span></span></button>`;
+      title = esc(mini?.name || d.uid);
+      body = `<div class="menu">
+        ${item("restart", "mdi:restart", "Restart", "Keeps all its settings; back within a few seconds.", mini?.online)}
+        ${item("reset", "mdi:backup-restore", "Factory reset…", "Forgets everything; found again as a new XP-Mini.", mini?.online, true)}
+        ${item("replace", "mdi:swap-horizontal", "Replace…", mini?.online ? "Only when it is offline: a new XP-Mini takes its place." : "A new XP-Mini takes its place.", !mini?.online && spares)}
+        ${item("remove", "mdi:delete-outline", "Remove…", mini?.online ? "Only when it is offline (disconnected for good)." : "Forget it: lights, names and DMX block.", !mini?.online, true)}
+      </div>`;
     } else if (d.kind === "reset") {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
@@ -1205,7 +1221,7 @@ class NetroniPanel extends HTMLElement {
             <button class="icon-btn" data-action="close-dialog" title="Close"><ha-icon icon="mdi:close"></ha-icon></button></div>
           ${body}
           <div class="dialog-actions">
-            <button class="btn secondary" data-action="close-dialog">Cancel</button>${action}
+            <button class="btn secondary" data-action="close-dialog">${action ? "Cancel" : "Close"}</button>${action}
           </div>
         </div>
       </div>`;
@@ -1342,9 +1358,14 @@ const STYLE = `
     background: var(--primary-color); color: var(--text-primary-color, #fff); }
   .btn.secondary { background: none; color: var(--primary-color); }
   .btn.danger { background: var(--bad); color: #fff; }
-  .btn.secondary.danger-text { color: var(--bad); }
-  .btn ha-icon { --mdc-icon-size: 18px; vertical-align: -3px; margin-right: 2px; }
-  .mini-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 0 -12px; }
+  .menu { display: flex; flex-direction: column; margin: 4px -12px 0; }
+  .menu-item { display: flex; align-items: flex-start; gap: 14px; text-align: left; font: inherit; color: inherit; background: none;
+    border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+  .menu-item:hover:not(:disabled) { background: rgba(127, 127, 127, .14); }
+  .menu-item:disabled { opacity: .4; cursor: default; }
+  .menu-item > ha-icon { margin-top: 2px; color: var(--secondary-text-color); }
+  .menu-item.danger-text, .menu-item.danger-text > ha-icon { color: var(--bad); }
+  .menu-item .sub { display: block; font-weight: 400; }
   .card.mini.focused { box-shadow: 0 0 0 2px var(--primary-color); }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
