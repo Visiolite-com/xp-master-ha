@@ -33,7 +33,8 @@
         "menu_options": {
           "tunable_white": "Configure ports",
           "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
-          "factory_reset": "Factory reset an XP-Mini"
+          "factory_reset": "Factory reset an XP-Mini",
+          "replace": "Replace an XP-Mini"
         }
       },
       "tunable_white": {
@@ -67,6 +68,18 @@
       "reset_confirm": {
         "title": "Reset {mini} to factory settings?",
         "description": "{mini} ({uid}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again at once as a new XP-Mini, with default light names, no areas and the first free DMX block. Automations, scenes and dashboards that use its lights may have to be updated.\n\nTo restart it without losing anything, use its Restart button instead.\n\nSubmit to reset."
+      },
+      "replace": {
+        "title": "Replace an XP-Mini",
+        "description": "Mount the new XP-Mini in the place of the one that is gone, connect it, then pick both here.",
+        "data": {
+          "old": "XP-Mini to replace (offline)",
+          "new": "New XP-Mini"
+        }
+      },
+      "replace_confirm": {
+        "title": "Replace {old} with {new}?",
+        "description": "**{new}** ({new_uid}) takes the place of **{old}** ({old_uid}): its DMX block {dmx}, port settings, light names, areas and groups. The lights keep their entities, so automations, scenes, dashboards and Matter apps keep working.{lost}\n\nSubmit to replace."
       }
     },
     "abort": {
@@ -81,7 +94,10 @@
       "no_online_minis": "No XP-Mini is connected.",
       "reset_failed": "The XP-Mini was not reset: {error}",
       "reset_done": "{mini} was reset. It is back as a new XP-Mini at DMX {dmx}.",
-      "reset_done_gone": "{mini} was reset. It has not been found again yet; it appears as a new XP-Mini once it is."
+      "reset_done_gone": "{mini} was reset. It has not been found again yet; it appears as a new XP-Mini once it is.",
+      "nothing_to_replace": "No XP-Mini is offline: only one that is gone can be replaced.",
+      "replace_failed": "The XP-Mini was not replaced: {error}",
+      "replace_done": "{old} now runs on the new XP-Mini."
     }
   },
   "entity": {
@@ -156,6 +172,29 @@
           "not_loaded": "The XP-Master is not connected. Try again when it is online.",
           "resolved": "This XP-Mini is back online or already removed.",
           "remove_failed": "The XP-Master could not remove it: {error}"
+        }
+      }
+    },
+    "mini_replacement": {
+      "title": "New XP-Mini {name}: is it a replacement?",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "New XP-Mini {name}",
+            "description": "{name} ({uid}) was found while another XP-Mini is offline. If it was mounted in that one's place, it can take over its lights, names, areas, groups and DMX block.",
+            "data": {
+              "replaces": "This XP-Mini"
+            }
+          },
+          "confirm": {
+            "title": "Replace {old} with {new}?",
+            "description": "**{new}** ({new_uid}) takes the place of **{old}** ({old_uid}): its DMX block {dmx}, port settings, light names, areas and groups. The lights keep their entities, so automations, scenes, dashboards and Matter apps keep working.{lost}\n\nSubmit to replace."
+          }
+        },
+        "abort": {
+          "not_loaded": "The XP-Master is not connected. Try again when it is online.",
+          "resolved": "Nothing to do any more: the XP-Minis concerned are back, replaced or removed.",
+          "replace_failed": "The XP-Mini was not replaced: {error}"
         }
       }
     }

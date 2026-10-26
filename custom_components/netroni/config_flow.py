@@ -28,6 +28,7 @@ from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
 
 LOCALHOST = "127.0.0.1"  # Home Assistant and the Netroni service share the host network
 from .matter import async_open_window, paired_apps_text, qr_placeholders
+from .replace import async_replace, replace_summary
 
 
 class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -122,6 +123,7 @@ class NetroniOptionsFlow(OptionsFlow):
 
     def __init__(self) -> None:
         self._uid = ""
+        self._new = ""
         self._pair: list[int] = []
         self._unpair: list[int] = []
 
@@ -132,7 +134,9 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
-        return self.async_show_menu(step_id="init", menu_options=["tunable_white", "matter", "factory_reset"])
+        return self.async_show_menu(
+            step_id="init", menu_options=["tunable_white", "matter", "replace", "factory_reset"]
+        )
 
     # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".
 
@@ -198,6 +202,60 @@ class NetroniOptionsFlow(OptionsFlow):
 
                 return step
         raise AttributeError(name)
+
+    # --- Replace an XP-Mini ---
+
+    async def async_step_replace(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        minis = self._hub.config.get("minis", [])
+        offline = [m for m in minis if not m.get("online", True)]
+        online = [m for m in minis if m.get("online", True)]
+        if not offline:
+            return self.async_abort(reason="nothing_to_replace")
+        if not online:
+            return self.async_abort(reason="no_online_minis")
+        if user_input is not None:
+            self._uid, self._new = user_input["old"], user_input["new"]
+            return await self.async_step_replace_confirm()
+        # New units found while another was offline first: they are the likely replacements.
+        online.sort(key=lambda m: not m.get("replace_candidate"))
+        schema = vol.Schema(
+            {
+                vol.Required("old"): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=m["uid"], label=f"{m['name']} ({m['uid']})") for m in offline],
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+                vol.Required("new", default=online[0]["uid"]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=m["uid"],
+                                label=f"{m['name']} ({m.get('hardware_uid') or m['uid']})"
+                                + (" · new" if m.get("replace_candidate") else ""),
+                            )
+                            for m in online
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="replace", data_schema=schema)
+
+    async def async_step_replace_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        old, new = self._hub.mini(self._uid), self._hub.mini(self._new)
+        if old is None or new is None:
+            return self.async_abort(reason="mini_gone")
+        if user_input is not None:
+            try:
+                await async_replace(self._hub, self._uid, self._new)
+            except NetroniError as err:
+                return self.async_abort(reason="replace_failed", description_placeholders={"error": str(err)})
+            return self.async_abort(reason="replace_done", description_placeholders={"old": old["name"]})
+        return self.async_show_form(
+            step_id="replace_confirm", data_schema=vol.Schema({}), description_placeholders=replace_summary(self._hub, old, new)
+        )
 
     # --- Factory reset ---
 

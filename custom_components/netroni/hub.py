@@ -18,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
 OFFLINE_ISSUE = "mini_offline_"
+REPLACE_ISSUE = "mini_new_"  # Repairs issue: is this new XP-Mini replacing one that is offline?
 ALL_MINIS = "*"  # async_add_identify_listener key: every XP-Mini of this XP-Master  # Repairs issue id prefix, followed by the XP-Mini UID
 
 
@@ -199,8 +200,29 @@ class NetroniHub:
         self.config = config
         if changed:
             self._apply_structure()
+        self.async_update_offline_issues()
+        self._update_devices()
         self._update_hidden()
         self._notify()
+
+    @callback
+    def _update_devices(self) -> None:
+        """Serial number and firmware follow the unit installed (they change with a replacement)."""
+        dev_reg = dr.async_get(self.hass)
+        devices = {
+            ident[1]: device
+            for device in dr.async_entries_for_config_entry(dev_reg, self.entry.entry_id)
+            for ident in device.identifiers
+            if ident[0] == DOMAIN
+        }
+        for mini in self.config.get("minis", []):
+            device = devices.get(mini["uid"])
+            if device is None:
+                continue
+            serial = mini.get("hardware_uid") or mini["uid"]
+            firmware = mini.get("firmware") or device.sw_version
+            if device.serial_number != serial or device.sw_version != firmware:
+                dev_reg.async_update_device(device.id, serial_number=serial, sw_version=firmware)
 
     @callback
     def _on_disconnect(self) -> None:
@@ -247,13 +269,31 @@ class NetroniHub:
 
     @callback
     def async_update_offline_issues(self) -> None:
-        """A Repairs issue per offline XP-Mini; it goes away when the XP-Mini is back or removed."""
+        """A Repairs issue per offline XP-Mini; it goes away when the XP-Mini is back or removed.
+        And one per new XP-Mini that may replace an offline one, until that is answered."""
         issue_reg = ir.async_get(self.hass)
-        offline = {mini["uid"]: mini for mini in self.config.get("minis", []) if not mini.get("online", True)}
+        minis = self.config.get("minis", [])
+        offline = {mini["uid"]: mini for mini in minis if not mini.get("online", True)}
+        candidates = {m["uid"]: m for m in minis if m.get("replace_candidate") and m.get("online", True)} if offline else {}
         for domain, issue_id in list(issue_reg.issues):
-            if domain == DOMAIN and issue_id.startswith(OFFLINE_ISSUE):
-                if issue_id.removeprefix(OFFLINE_ISSUE) not in offline:
-                    ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            if domain != DOMAIN:
+                continue
+            if issue_id.startswith(OFFLINE_ISSUE) and issue_id.removeprefix(OFFLINE_ISSUE) not in offline:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            if issue_id.startswith(REPLACE_ISSUE) and issue_id.removeprefix(REPLACE_ISSUE) not in candidates:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        for uid, mini in candidates.items():
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                REPLACE_ISSUE + uid,
+                is_fixable=True,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="mini_replacement",
+                translation_placeholders={"name": mini["name"], "uid": uid},
+                data={"entry_id": self.entry.entry_id, "uid": uid, "kind": "replace"},
+            )
         for uid, mini in offline.items():
             ir.async_create_issue(
                 self.hass,
@@ -280,7 +320,7 @@ class NetroniHub:
         for device in dr.async_entries_for_config_entry(dev_reg, self.entry.entry_id):
             uids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
             if uids and not uids & known:
-                dev_reg.async_update_device(device.id, remove_config_entry_id=self.entry.entry_id)
+                dev_reg.async_remove_device(device.id)
 
 
 def _structure(config: dict) -> tuple:
