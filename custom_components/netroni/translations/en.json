@@ -179,7 +179,7 @@
       "title": "New XP-Mini {name}: is it a replacement?",
       "fix_flow": {
         "step": {
-          "init": {
+          "choose": {
             "title": "New XP-Mini {name}",
             "description": "{name} ({uid}) was found while another XP-Mini is offline. If it was mounted in that one's place, it can take over its lights, names, areas, groups and DMX block.",
             "data": {

@@ -1,6 +1,6 @@
 """Repairs: an offline XP-Mini (the fix removes it from the XP-Master when it was taken away), and a
 new XP-Mini found while another is offline (the fix makes it that one's replacement, or confirms it
-is an extra XP-Mini)."""
+is a new XP-Mini)."""
 from __future__ import annotations
 
 from typing import Any
@@ -16,7 +16,7 @@ from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, Sel
 from .client import NetroniError
 from .replace import async_replace, replace_summary
 
-EXTRA = "extra"  # the answer "it is an extra XP-Mini"
+EXTRA = "extra"  # the answer "it is a new XP-Mini", not a replacement
 
 
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data: dict[str, Any] | None) -> RepairsFlow:
@@ -38,6 +38,10 @@ class ReplacementFlow(RepairsFlow):
         return entry.runtime_data if entry is not None and entry.state is ConfigEntryState.LOADED else None
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        # Home Assistant opens a repair flow with the issue as user_input: not an answer yet.
+        return await self.async_step_choose()
+
+    async def async_step_choose(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         hub = self._hub()
         if hub is None:
             return self.async_abort(reason="not_loaded")
@@ -55,12 +59,12 @@ class ReplacementFlow(RepairsFlow):
             self._old = user_input["replaces"]
             return await self.async_step_confirm()
         options = [SelectOptionDict(value=m["uid"], label=f"It replaces {m['name']} ({m['uid']}), offline") for m in offline]
-        options.append(SelectOptionDict(value=EXTRA, label="No, it is an extra XP-Mini"))
+        options.append(SelectOptionDict(value=EXTRA, label="No, it is a new XP-Mini"))
         schema = vol.Schema(
             {vol.Required("replaces"): SelectSelector(SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}
         )
         return self.async_show_form(
-            step_id="init", data_schema=schema, description_placeholders={"name": new["name"], "uid": self._uid}
+            step_id="choose", data_schema=schema, description_placeholders={"name": new["name"], "uid": self._uid}
         )
 
     async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
