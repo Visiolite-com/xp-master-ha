@@ -24,7 +24,7 @@ from .const import (
     SIGNAL_HUBS_CHANGED,
 )
 from .hub import NetroniHub
-from .panel import async_setup_panel
+from .panel import PANEL_URL_PATH, async_setup_panel
 from .sync import async_setup_label_sync
 from .websocket import async_setup_websocket
 
@@ -84,6 +84,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         model="XP-Master",
         name=hub.master.get("name", "XP-Master"),
         serial_number=hub.master_id,
+        configuration_url=f"homeassistant://{PANEL_URL_PATH}",
     )
     hub.master_device_id = master_device.id
 

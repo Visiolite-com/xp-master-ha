@@ -40,6 +40,9 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_group_delete,
         ws_update_light,
         ws_remove_mini,
+        ws_restart_mini,
+        ws_factory_reset_mini,
+        ws_replace_mini,
         ws_dmx_snapshot,
         ws_matter_status,
         ws_matter_open_window,
@@ -74,8 +77,14 @@ def _overview(hass: HomeAssistant) -> dict:
     masters = []
     for hub in _hubs(hass):
         minis = []
+        devices = {
+            ident[1]: device
+            for device in dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id)
+            for ident in device.identifiers
+            if ident[0] == DOMAIN
+        }
         for mini in hub.config.get("minis", []):
-            device = dev_reg.async_get_device(identifiers={(DOMAIN, mini["uid"])})
+            device = devices.get(mini["uid"])
             minis.append(
                 {
                     "uid": mini["uid"],
@@ -84,6 +93,8 @@ def _overview(hass: HomeAssistant) -> dict:
                     "dmx_start": mini["dmx_start"],
                     "firmware": mini.get("firmware"),
                     "pairs": mini.get("pairs", []),
+                    "hardware_uid": mini.get("hardware_uid") or mini["uid"],
+                    "replace_candidate": bool(mini.get("replace_candidate")),
                     "device_id": device.id if device else None,
                     "area": area_name(device.area_id) if device else None,
                 }
@@ -368,6 +379,47 @@ async def ws_remove_mini(hass: HomeAssistant, connection: websocket_api.ActiveCo
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"])
+
+
+async def _mini_command(connection: websocket_api.ActiveConnection, msg: dict, hub: NetroniHub, command: str, **args) -> None:
+    try:
+        result = await hub.client.call(command, **args)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result or {})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/restart_mini", vol.Required("entry_id"): str, vol.Required("uid"): str}
+)
+@websocket_api.async_response
+async def ws_restart_mini(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/restart", uid=msg["uid"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/factory_reset_mini", vol.Required("entry_id"): str, vol.Required("uid"): str}
+)
+@websocket_api.async_response
+async def ws_factory_reset_mini(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/factory_reset", uid=msg["uid"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/replace_mini",
+        vol.Required("entry_id"): str,
+        vol.Required("old"): str,
+        vol.Required("new"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_replace_mini(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/replace", old=msg["old"], new=msg["new"])
 
 
 @websocket_api.websocket_command({vol.Required("type"): "netroni/dmx_snapshot", vol.Required("entry_id"): str})

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from urllib.parse import quote
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
@@ -11,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN, MANUFACTURER
 from .hub import NetroniHub
+from .panel import PANEL_URL_PATH
 
 
 class NetroniEntity(Entity):
@@ -28,6 +30,8 @@ class NetroniEntity(Entity):
             model="XP-Mini",
             name=mini.get("name") or f"XP-Mini {mini_uid}",
             serial_number=mini.get("hardware_uid") or mini_uid,
+            # "Configure" on the device page: this XP-Mini in the Netroni panel (restart, reset, ...)
+            configuration_url=f"homeassistant://{PANEL_URL_PATH}?mini={quote(mini_uid)}",
             sw_version=mini.get("firmware"),
             via_device_id=hub.master_device_id,
         )

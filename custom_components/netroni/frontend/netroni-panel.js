@@ -49,6 +49,7 @@ class NetroniPanel extends HTMLElement {
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
     this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
     this._busy = false;
+    this._focusMini = new URLSearchParams(location.search).get("mini"); // from a device page's "Configure"
     this._stateSig = "";
     this._ticks = 0;
     this.attachShadow({ mode: "open" });
@@ -94,6 +95,13 @@ class NetroniPanel extends HTMLElement {
   set route(_route) {}
 
   connectedCallback() {
+    // Home Assistant may keep the panel element between visits: look at the link again each time.
+    const focus = new URLSearchParams(location.search).get("mini");
+    if (focus) {
+      this._focusMini = focus;
+      this._tab = "installation";
+      this._renderMain();
+    }
     if (this._hass && !this._unsub) this._subscribe();
     this._timer = setInterval(() => this._tick(), 1000);
   }
@@ -228,6 +236,21 @@ class NetroniPanel extends HTMLElement {
         break;
       case "confirm-remove":
         this._removeMini();
+        break;
+      case "restart":
+        this._restartMini(d.entry, d.uid);
+        break;
+      case "reset":
+        this._openDialog({ kind: "reset", entry: d.entry, uid: d.uid });
+        break;
+      case "confirm-reset":
+        this._resetMini();
+        break;
+      case "replace":
+        this._openDialog({ kind: "replace", entry: d.entry, uid: d.uid });
+        break;
+      case "confirm-replace":
+        this._replaceMini();
         break;
       case "cct": {
         const mini = this._mini(d.entry, d.uid);
@@ -426,6 +449,33 @@ class NetroniPanel extends HTMLElement {
   async _removeMini() {
     const { entry, uid } = this._dialog;
     await this._run(() => this._call({ type: "netroni/remove_mini", entry_id: entry, uid }));
+  }
+
+  async _restartMini(entry, uid) {
+    try {
+      await this._call({ type: "netroni/restart_mini", entry_id: entry, uid });
+      this._toast(`${this._miniName(this._master(entry), uid)} is restarting`);
+    } catch {}
+  }
+
+  async _resetMini() {
+    const { entry, uid } = this._dialog;
+    const name = this._miniName(this._master(entry), uid);
+    await this._run(async () => {
+      const result = await this._call({ type: "netroni/factory_reset_mini", entry_id: entry, uid });
+      this._toast(result?.found_again ? `${name} was reset: back as a new XP-Mini at DMX ${result.dmx_start}` : `${name} was reset`);
+    });
+  }
+
+  async _replaceMini() {
+    const { entry, uid } = this._dialog;
+    const unit = this.shadowRoot.getElementById("replace-new")?.value;
+    if (!unit) return;
+    const name = this._miniName(this._master(entry), uid);
+    await this._run(async () => {
+      await this._call({ type: "netroni/replace_mini", entry_id: entry, old: uid, new: unit });
+      this._toast(`${name} now runs on the new XP-Mini`);
+    });
   }
 
   /** Run a dialog's action; close the dialog when it worked, keep it open (with the error toast) otherwise. */
@@ -706,6 +756,16 @@ class NetroniPanel extends HTMLElement {
       <div class="content"><div class="inner">${this._body()}</div></div>`;
     if (scroll) this.shadowRoot.querySelector(".content").scrollTop = scroll;
     if (this._tab === "matter") this._updateCountdowns();
+    if (this._focusMini && this._tab === "installation" && this._data) {
+      const id = `mini-${this._focusMini}`;
+      if (this.shadowRoot.getElementById(id)) {
+        this._focused = this._focusMini; // highlighted from now on (the card is drawn with it)
+        this._focusMini = null;
+        this.shadowRoot.getElementById(id).classList.add("focused");
+        // Look the card up again: the panel may have been drawn anew in between.
+        setTimeout(() => this.shadowRoot.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+      }
+    }
     if (this._tab === "dmx") {
       this._dmxSig = this._dmxSignature();
       this._updateDmx();
@@ -771,23 +831,33 @@ class NetroniPanel extends HTMLElement {
 
   _miniCard(master, mini) {
     const ports = Array.from({ length: master.ports_per_mini }, (_, i) => this._port(master, mini, i + 1)).join("");
+    const data = `data-entry="${master.entry_id}" data-uid="${esc(mini.uid)}"`;
+    const spares = master.minis.filter((m) => m.online && m.uid !== mini.uid);
     const offline = !mini.online
       ? this._banner(
           "warn",
           "mdi:lan-disconnect",
           `<b>${esc(mini.name)} is offline.</b> It no longer answers so its lights can't be controlled. Check its cable and power supply.`,
           this._admin
-            ? `<button class="btn danger" data-action="remove" data-entry="${master.entry_id}" data-uid="${esc(mini.uid)}">Remove XP-Mini</button>`
+            ? (spares.length ? `<button class="btn" data-action="replace" ${data}>Replace…</button> ` : "") +
+                `<button class="btn danger" data-action="remove" ${data}>Remove XP-Mini</button>`
             : ""
         )
       : "";
+    const actions =
+      mini.online && this._admin
+        ? `<div class="actions mini-actions">
+            <button class="btn secondary" data-action="restart" ${data}><ha-icon icon="mdi:restart"></ha-icon> Restart</button>
+            <button class="btn secondary danger-text" data-action="reset" ${data}><ha-icon icon="mdi:backup-restore"></ha-icon> Factory reset…</button>
+          </div>`
+        : "";
     return `
-      <section class="card mini ${mini.online ? "" : "offline"}">
+      <section class="card mini ${mini.online ? "" : "offline"} ${this._focused === mini.uid ? "focused" : ""}" id="mini-${esc(mini.uid)}">
         <div class="card-head">
           <ha-icon class="head-icon mini-icon" icon="netroni:xp-mini"></ha-icon>
           <div class="grow">
             <h3>${esc(mini.name)}</h3>
-            <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
+            <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.hardware_uid && mini.hardware_uid !== mini.uid ? ` (unit ${esc(mini.hardware_uid)})` : ""}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
           </div>
           ${this._chip(mini.online, "Online", "Offline")}
           ${mini.device_id ? this._deviceLink(mini.device_id) : ""}
@@ -797,7 +867,7 @@ class NetroniPanel extends HTMLElement {
           ${this._fact("Firmware", esc(mini.firmware || "—"))}
           ${this._fact("Tunable-white ports", mini.pairs.length ? mini.pairs.map((p) => `${p}T`).join(", ") : "none")}
         </div>
-        ${offline}
+        ${offline}${actions}
         <div class="ports">${ports}</div>
       </section>`;
   }
@@ -1107,6 +1177,26 @@ class NetroniPanel extends HTMLElement {
       body = `<p>${esc(mini?.name || d.uid)} (${esc(d.uid)}) is removed from the XP-Master: its lights, names and DMX block are deleted.</p>
         <p class="sub">If it is connected again later, it will be added as a new XP-Mini.</p>`;
       action = `<button class="btn danger" data-action="confirm-remove" ${this._busy ? "disabled" : ""}>Remove XP-Mini</button>`;
+    } else if (d.kind === "reset") {
+      const mini = this._mini(d.entry, d.uid);
+      const name = esc(mini?.name || d.uid);
+      title = `Reset ${name} to factory settings?`;
+      body = `<p>${name} (${esc(d.uid)}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again at once as a new XP-Mini, with default light names, no areas and the first free DMX block.</p>
+        <p class="sub">Automations, scenes and dashboards that use its lights may have to be updated. To restart it without losing anything, use Restart instead.</p>`;
+      action = `<button class="btn danger" data-action="confirm-reset" ${this._busy ? "disabled" : ""}>Factory reset</button>`;
+    } else if (d.kind === "replace") {
+      const master = this._master(d.entry);
+      const mini = this._mini(d.entry, d.uid);
+      const name = esc(mini?.name || d.uid);
+      const spares = (master?.minis || []).filter((m) => m.online && m.uid !== d.uid).sort((a, b) => b.replace_candidate - a.replace_candidate);
+      title = `Replace ${name}`;
+      body = `<p>The new XP-Mini takes the place of ${name}: its DMX block ${mini?.dmx_start}, port settings, light names, areas and groups. The lights keep their entities, so automations, scenes, dashboards and Matter apps keep working.</p>
+        <label class="field"><span>New XP-Mini</span>
+          <select id="replace-new">${spares
+            .map((m) => `<option value="${esc(m.uid)}">${esc(m.name)} (${esc(m.hardware_uid || m.uid)})${m.replace_candidate ? " · new" : ""}</option>`)
+            .join("")}</select></label>
+        <p class="sub">The new XP-Mini's own entry is removed, with any names given to its lights.</p>`;
+      action = `<button class="btn" data-action="confirm-replace" ${this._busy ? "disabled" : ""}>Replace</button>`;
     }
     host.innerHTML = `
       <div class="scrim" data-action="scrim">
@@ -1252,6 +1342,10 @@ const STYLE = `
     background: var(--primary-color); color: var(--text-primary-color, #fff); }
   .btn.secondary { background: none; color: var(--primary-color); }
   .btn.danger { background: var(--bad); color: #fff; }
+  .btn.secondary.danger-text { color: var(--bad); }
+  .btn ha-icon { --mdc-icon-size: 18px; vertical-align: -3px; margin-right: 2px; }
+  .mini-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 0 -12px; }
+  .card.mini.focused { box-shadow: 0 0 0 2px var(--primary-color); }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
   .apps { display: flex; flex-direction: column; gap: 4px; }
