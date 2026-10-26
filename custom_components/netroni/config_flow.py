@@ -135,7 +135,7 @@ class NetroniOptionsFlow(OptionsFlow):
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
         return self.async_show_menu(
-            step_id="init", menu_options=["tunable_white", "matter", "replace", "factory_reset"]
+            step_id="init", menu_options=["tunable_white", "matter", "restart", "replace", "factory_reset"]
         )
 
     # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".
@@ -189,7 +189,11 @@ class NetroniOptionsFlow(OptionsFlow):
     def __getattr__(self, name: str):
         """Menu entries mini_0, mini_1, ... of "Configure ports" and reset_0, ... of "Factory reset":
         one step per XP-Mini."""
-        for prefix, next_step in (("async_step_mini_", "async_step_ports"), ("async_step_reset_", "async_step_reset_confirm")):
+        for prefix, next_step in (
+            ("async_step_mini_", "async_step_ports"),
+            ("async_step_restart_", "async_step_restart_now"),
+            ("async_step_reset_", "async_step_reset_confirm"),
+        ):
             if name.startswith(prefix) and name[len(prefix):].isdigit():
                 index = int(name[len(prefix):])
 
@@ -256,6 +260,29 @@ class NetroniOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="replace_confirm", data_schema=vol.Schema({}), description_placeholders=replace_summary(self._hub, old, new)
         )
+
+    # --- Restart (as the XP-Mini's Restart button: it keeps everything, so no confirmation) ---
+
+    async def async_step_restart(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        options = {
+            f"restart_{index}": f"{mini['name']} ({mini['uid']})"
+            for index, mini in enumerate(self._hub.config.get("minis", []))
+            if mini.get("online", True)
+        }
+        if not options:
+            return self.async_abort(reason="no_online_minis")
+        options["init"] = "Back"
+        return self.async_show_menu(step_id="restart", menu_options=options)
+
+    async def async_step_restart_now(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        mini = self._hub.mini(self._uid)
+        if mini is None:
+            return self.async_abort(reason="mini_gone")
+        try:
+            await self._hub.client.call("mini/restart", uid=self._uid)
+        except NetroniError as err:
+            return self.async_abort(reason="restart_failed", description_placeholders={"error": str(err)})
+        return self.async_abort(reason="restart_done", description_placeholders={"mini": mini["name"]})
 
     # --- Factory reset ---
 

@@ -33,6 +33,7 @@
         "menu_options": {
           "tunable_white": "Configure ports",
           "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
+          "restart": "Restart an XP-Mini",
           "factory_reset": "Factory reset an XP-Mini",
           "replace": "Replace an XP-Mini"
         }
@@ -80,6 +81,10 @@
       "replace_confirm": {
         "title": "Replace {old} with {new}?",
         "description": "**{new}** ({new_uid}) takes the place of **{old}** ({old_uid}): its DMX block {dmx}, port settings, light names, areas and groups. The lights keep their entities, so automations, scenes, dashboards and Matter apps keep working.{lost}\n\nSubmit to replace."
+      },
+      "restart": {
+        "title": "Restart an XP-Mini",
+        "description": "Pick the XP-Mini to restart. It keeps all its settings and is back within a few seconds; its lights may flicker off meanwhile. Each XP-Mini also has a Restart button on its device page."
       }
     },
     "abort": {
@@ -97,7 +102,9 @@
       "reset_done_gone": "{mini} was reset. It has not been found again yet; it appears as a new XP-Mini once it is.",
       "nothing_to_replace": "No XP-Mini is offline: only one that is gone can be replaced.",
       "replace_failed": "The XP-Mini was not replaced: {error}",
-      "replace_done": "{old} now runs on the new XP-Mini."
+      "replace_done": "{old} now runs on the new XP-Mini.",
+      "restart_done": "{mini} is restarting.",
+      "restart_failed": "The XP-Mini was not restarted: {error}"
     }
   },
   "entity": {
