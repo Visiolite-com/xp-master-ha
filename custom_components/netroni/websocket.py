@@ -21,7 +21,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_call_later
 
 from .client import CommandError, NetroniError
-from .const import DOMAIN, PORTS_PER_MINI, SIGNAL_HUBS_CHANGED
+from .const import CONF_TOKEN, DOMAIN, PORTS_PER_MINI, SIGNAL_HUBS_CHANGED
 from .hub import ALL_MINIS, NetroniHub
 from .sync import async_apply_group_area
 from .matter import async_open_window, format_manual_code, qr_placeholders
@@ -47,6 +47,10 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_matter_status,
         ws_matter_open_window,
         ws_matter_close_window,
+        ws_remote_status,
+        ws_remote_open_pairing,
+        ws_remote_close_pairing,
+        ws_remote_revoke,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -151,6 +155,8 @@ def _overview(hass: HomeAssistant) -> dict:
                 if hub.update_status.get("update_available") else None,
                 "update_state": hub.update_status.get("state"),
                 "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.master_id}_firmware"),
+                # Paired over remote access (this Home Assistant is not the XP-Master's own).
+                "remote": bool(hub.entry.data.get(CONF_TOKEN)),
                 "device_id": hub.master_device_id,
                 "area": area_name(master_device.area_id) if master_device else None,
                 "ports_per_mini": PORTS_PER_MINI,
@@ -495,3 +501,50 @@ async def ws_matter_close_window(
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"])
+
+
+# --- remote access: Home Assistants elsewhere on the LAN, paired with this XP-Master ---
+
+
+def _remote_view(status: dict, admin: bool) -> dict:
+    if not admin and status.get("pairing"):  # the code is for administrators only
+        status = {**status, "pairing": {"seconds_left": status["pairing"]["seconds_left"]}}
+    return status
+
+
+async def _remote_call(hass: HomeAssistant, connection, msg: dict, command: str, **fields) -> None:
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call(command, **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], _remote_view(status, connection.user.is_admin))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/remote_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_remote_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _remote_call(hass, connection, msg, "remote/status")
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/remote_open_pairing", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_remote_open_pairing(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _remote_call(hass, connection, msg, "remote/open_pairing")
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/remote_close_pairing", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_remote_close_pairing(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _remote_call(hass, connection, msg, "remote/close_pairing")
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/remote_revoke", vol.Required("entry_id"): str, vol.Required("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_remote_revoke(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    await _remote_call(hass, connection, msg, "remote/revoke", client_id=msg["client_id"])

@@ -12,12 +12,11 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .backup import RESTORE_ISSUE, async_read_backup
-from .client import NetroniClient, NetroniError, async_read_token
+from .client import NetroniError, async_entry_token, client_for_entry
 from .const import DOMAIN
 from .replace import async_replace, replace_summary
 
@@ -51,8 +50,7 @@ class RestoreFlow(RepairsFlow):
         if user_input is None:
             return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}))
         # Straight to the service on this machine: the entry may not be set up (another id).
-        session = async_get_clientsession(self.hass)
-        client = NetroniClient(session, entry.data["host"], entry.data["port"], token=await async_read_token(self.hass))
+        client = client_for_entry(self.hass, entry.data, token=await async_entry_token(self.hass, entry.data))
         try:
             await client.connect()
             await client.call("backup/restore", backup=backup)

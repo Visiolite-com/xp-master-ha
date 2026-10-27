@@ -5,6 +5,11 @@
 // from hass.states. Everyone can look and use Identify; changes need an administrator (the
 // WebSocket commands enforce it, the panel only hides the controls).
 
+// The Netroni icons (logo, XP-Mini). Also loaded on every page by the integration, for the sidebar;
+// imported here too, so the panel has them even when the browser still runs a start page cached
+// from before the integration was installed.
+import "./netroni-icons.js";
+
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
 const MATTER_POLL_S = 10;
 const DMX_POLL_MS = 250;
@@ -43,6 +48,8 @@ class NetroniPanel extends HTMLElement {
     this._dialog = null; // the open dialog: {kind, ...}
     this._identified = new Map(); // "entry|uid|port" -> {lightIds, until}
     this._matter = {}; // entry_id -> status from netroni/matter_status
+    this._remote = {}; // entry_id -> status from netroni/remote_status (this XP-Master's remote access)
+    this._remoteClosesAt = {}; // entry_id -> ms, when its remote access pairing window closes
     this._windowClosesAt = {}; // entry_id -> ms, when the open pairing window closes (from the bridge)
     this._dmx = {}; // entry_id -> netroni/dmx_snapshot result (plus fps, measured here)
     this._dmxPct = false; // show values as % instead of 0-255
@@ -133,6 +140,7 @@ class NetroniPanel extends HTMLElement {
       this._error = null;
       this._renderMain();
       if (this._tab === "matter") this._refreshMatter();
+      if (this._tab === "remote") this._refreshRemote();
       if (this._tab !== "dmx") this._refreshDmx(); // is there DMX output to show a tab for?
     } else if (msg.kind === "identified") {
       this._onIdentified(msg);
@@ -171,6 +179,12 @@ class NetroniPanel extends HTMLElement {
       this._updateCountdowns();
       if (this._ticks % MATTER_POLL_S === 0) this._refreshMatter();
     }
+    if (this._tab === "remote") {
+      this._updateRemoteCountdowns();
+      // While a pairing window is open, look often: the pairing appears as soon as it is made.
+      const open = Object.keys(this._remoteClosesAt).length > 0;
+      if (this._ticks % (open ? 2 : MATTER_POLL_S) === 0) this._refreshRemote();
+    }
   }
 
   // --- events and actions -------------------------------------------------------------------
@@ -202,6 +216,7 @@ class NetroniPanel extends HTMLElement {
         this._tab = d.tab;
         this._renderMain();
         if (this._tab === "matter") this._refreshMatter();
+        if (this._tab === "remote") this._refreshRemote();
         if (this._tab === "dmx") this._startDmxPoll();
         else this._stopDmxPoll();
         break;
@@ -302,6 +317,17 @@ class NetroniPanel extends HTMLElement {
         break;
       case "cancel-pairing":
         this._closeWindow(d.entry);
+        break;
+      case "remote-pair":
+        this._remoteCall(d.entry, "netroni/remote_open_pairing");
+        break;
+      case "remote-cancel":
+        this._remoteCall(d.entry, "netroni/remote_close_pairing");
+        break;
+      case "remote-revoke":
+        if (confirm(`Remove ${d.name}? It can no longer control this XP-Master until it is paired again.`)) {
+          this._remoteCall(d.entry, "netroni/remote_revoke", { client_id: d.client });
+        }
         break;
       case "scrim":
         if (ev.target === el) this._closeDialog();
@@ -537,6 +563,47 @@ class NetroniPanel extends HTMLElement {
     }
   }
 
+  async _refreshRemote() {
+    for (const master of this._localMasters()) {
+      try {
+        this._setRemote(master.entry_id, await this._hass.callWS({ type: "netroni/remote_status", entry_id: master.entry_id }));
+      } catch (err) {
+        this._remote[master.entry_id] = { error: err.message || String(err) };
+      }
+    }
+    if (this._tab === "remote") this._renderMain();
+  }
+
+  async _remoteCall(entry, type, fields = {}) {
+    this._remote[entry] = { ...this._remote[entry], busy: true };
+    this._renderMain();
+    try {
+      this._setRemote(entry, await this._call({ type, entry_id: entry, ...fields }));
+    } catch {
+      this._remote[entry] = { ...this._remote[entry], busy: false };
+    }
+    this._renderMain();
+  }
+
+  _setRemote(entry, status) {
+    this._remote[entry] = status;
+    if (status.pairing) this._remoteClosesAt[entry] = Date.now() + status.pairing.seconds_left * 1000;
+    else delete this._remoteClosesAt[entry];
+  }
+
+  _updateRemoteCountdowns() {
+    for (const [entry, closesAt] of Object.entries(this._remoteClosesAt)) {
+      const left = Math.max(0, Math.round((closesAt - Date.now()) / 1000));
+      const el = this.shadowRoot.getElementById(`remote-countdown-${entry}`);
+      if (el) el.textContent = left ? `The code works for another ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.` : "The pairing window is closing…";
+    }
+  }
+
+  /** XP-Masters this Home Assistant runs on (remote access is set up there, not from a paired one). */
+  _localMasters() {
+    return (this._data?.masters || []).filter((m) => !m.remote);
+  }
+
   _updateCountdowns() {
     let closed = false;
     for (const [entry, closesAt] of Object.entries(this._windowClosesAt)) {
@@ -755,6 +822,7 @@ class NetroniPanel extends HTMLElement {
         ${this._tabButton("installation", "Installation")}
         ${this._tabButton("groups", "Groups")}
         ${this._tabButton("matter", "Matter Connections")}
+        ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
       <div class="content"><div class="inner">${this._body()}</div></div>`;
@@ -787,6 +855,7 @@ class NetroniPanel extends HTMLElement {
       return `<div class="empty">No XP-Master is connected. Add one in Settings → Devices &amp; services.</div>`;
     }
     if (this._tab === "matter") return this._data.masters.map((m) => this._matterCard(m)).join("");
+    if (this._tab === "remote") return this._localMasters().map((m) => this._remoteCard(m)).join("");
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
     if (this._tab === "dmx") return this._data.masters.map((m) => this._dmxCard(m)).join("");
     return this._data.masters.map((m) => this._installation(m)).join("");
@@ -1014,6 +1083,61 @@ class NetroniPanel extends HTMLElement {
         </div>
         ${rows || `<div class="sub pad">No lights in this group. ${this._admin ? "Use Edit to add some." : ""}</div>`}
       </section>`;
+  }
+
+  _remoteCard(master) {
+    const status = this._remote[master.entry_id];
+    let body;
+    if (!status) body = `<div class="empty small">Loading…</div>`;
+    else if (status.error) body = this._banner("error", "mdi:alert-circle-outline", esc(status.error));
+    else body = this._remoteBody(master, status);
+    return `
+      <section class="card">
+        <div class="card-head">
+          <ha-icon class="head-icon" icon="mdi:home-import-outline"></ha-icon>
+          <div class="grow">
+            <h2>Remote Access</h2>
+            <div class="sub">${esc(master.name)} · Another Home Assistant on your network can run the Netroni integration and control this XP-Master.</div>
+          </div>
+        </div>
+        ${body}
+      </section>`;
+  }
+
+  _remoteBody(master, status) {
+    const entry = master.entry_id;
+    const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "never");
+    const clients = (status.clients || []).map(
+      (c) => `<div class="app"><ha-icon icon="mdi:home-assistant"></ha-icon>
+        <div class="grow"><div>${esc(c.name)}</div><div class="sub">Paired ${esc(when(c.created))} · last seen ${esc(when(c.last_seen))}</div></div>
+        ${this._admin ? `<button class="btn secondary" data-action="remote-revoke" data-entry="${entry}" data-client="${esc(c.id)}" data-name="${esc(c.name)}" ${status.busy ? "disabled" : ""}>Remove</button>` : ""}</div>`
+    );
+    let html = `<h4>Paired Home Assistants</h4>${clients.length ? `<div class="apps">${clients.join("")}</div>` : `<div class="sub pad">None yet.</div>`}`;
+    const fp = (status.fingerprint || "").replace(/:/g, "");
+    const fpShort = fp.slice(0, 16).match(/.{4}/g)?.join(" ") || "";
+    if (status.pairing && status.pairing.code) {
+      const code = `${status.pairing.code.slice(0, 3)} ${status.pairing.code.slice(3)}`;
+      html += `
+        <div class="qr-box">
+          <div class="grow">
+            <h4>Pair a Home Assistant</h4>
+            <p>In the other Home Assistant, add the <b>Netroni XP-Master</b> integration (it may already be offered under Discovered) and enter this code:</p>
+            <p><b class="code">${esc(code)}</b></p>
+            <div class="sub" id="remote-countdown-${entry}">The code works for 5 minutes.</div>
+            <p class="sub">It is also on the XP-Master's display, with the start of its certificate: ${esc(fpShort)}. Check that the other Home Assistant shows the same.</p>
+            <div class="actions"><button class="btn secondary" data-action="remote-cancel" data-entry="${entry}" ${status.busy ? "disabled" : ""}>Cancel</button></div>
+          </div>
+        </div>`;
+    } else if (status.pairing) {
+      html += `<div class="sub pad">A pairing window is open.</div>`;
+    } else if (this._admin) {
+      html += `<div class="actions"><button class="btn" data-action="remote-pair" data-entry="${entry}" ${status.busy ? "disabled" : ""}>
+        ${status.busy ? "Opening…" : "Pair a Home Assistant"}</button></div>`;
+    } else {
+      html += `<div class="sub pad">An administrator can pair a Home Assistant.</div>`;
+    }
+    html += `<p class="sub pad">The XP-Master only accepts remote connections while a Home Assistant is paired or a pairing window is open. The connection is encrypted; each paired Home Assistant has its own key and can be removed here.</p>`;
+    return html;
   }
 
   _matterCard(master) {

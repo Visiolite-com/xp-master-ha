@@ -6,16 +6,22 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_DEVICE_ID, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
-from .client import CannotConnect, CommandError, NetroniError
+from .client import AuthFailed, CannotConnect, CommandError, NetroniError
 from .const import (
     ATTR_PORT,
+    CONF_TOKEN,
     DOMAIN,
     MANUFACTURER,
     PORTS_PER_MINI,
@@ -74,6 +80,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
     hub = NetroniHub(hass, entry)
     try:
         await hub.async_start()
+    except AuthFailed as err:
+        if entry.data.get(CONF_TOKEN):  # remote access: pair again (reauth)
+            raise ConfigEntryAuthFailed(str(err)) from err
+        raise ConfigEntryNotReady(str(err)) from err
     except (CannotConnect, CommandError) as err:
         raise ConfigEntryNotReady(str(err)) from err
     # Restored from a backup onto a new or re-flashed XP-Master: offer the saved settings (Repairs).

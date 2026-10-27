@@ -1,11 +1,19 @@
-"""Config flow: manual entry or zeroconf discovery of an XP-Master."""
+"""Config flow: zeroconf discovery or manual entry of an XP-Master.
+
+The XP-Master this Home Assistant runs on is added by itself (the local API and its token file).
+Another XP-Master on the LAN is paired through its remote access: a code from its Netroni panel
+(Remote Access) and its front display, over TLS with its certificate pinned (docs/remote-access.md).
+"""
 from __future__ import annotations
 
 from typing import Any
 
 import voluptuous as vol
 
+from collections.abc import Mapping
+
 from homeassistant.config_entries import (
+    SOURCE_REAUTH,
     ConfigEntry,
     ConfigEntryState,
     ConfigFlow,
@@ -23,8 +31,16 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .client import CannotConnect, CommandError, NetroniClient, NetroniError, async_read_token
-from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
+from .client import (
+    CannotConnect,
+    CommandError,
+    NetroniClient,
+    NetroniError,
+    async_fetch_fingerprint,
+    async_pair,
+    async_read_token,
+)
+from .const import CONF_FINGERPRINT, CONF_TOKEN, DEFAULT_PORT, DOMAIN, PORTS_PER_MINI, REMOTE_PORT
 
 LOCALHOST = "127.0.0.1"  # Home Assistant and the Netroni service share the host network
 from .matter import async_open_window, paired_apps_text, qr_placeholders
@@ -43,6 +59,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         self._host = ""
         self._port = DEFAULT_PORT
         self._name = ""
+        self._fingerprint = ""  # remote access: hex SHA-256 of the XP-Master's certificate
 
     async def _probe(self, host: str, port: int) -> dict:
         client = NetroniClient(async_get_clientsession(self.hass), host, port, token=await async_read_token(self.hass))
@@ -55,24 +72,71 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            host, port = user_input[CONF_HOST], user_input[CONF_PORT]
-            try:
-                hello = await self._probe(host, port)
+            host = user_input[CONF_HOST].strip()
+            try:  # the XP-Master this Home Assistant runs on: its local API
+                hello = await self._probe(host, DEFAULT_PORT)
             except (CannotConnect, CommandError):
+                hello = None
+            if hello is not None:
+                await self.async_set_unique_id(hello["master"]["id"])
+                self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: DEFAULT_PORT})
+                return self.async_create_entry(
+                    title=hello["master"]["name"], data={CONF_HOST: host, CONF_PORT: DEFAULT_PORT}
+                )
+            try:  # another XP-Master: pair through its remote access
+                self._fingerprint = await async_fetch_fingerprint(self.hass, host, REMOTE_PORT)
+            except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(hello["master"]["id"])
-                self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port})
-                return self.async_create_entry(
-                    title=hello["master"]["name"], data={CONF_HOST: host, CONF_PORT: port}
-                )
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_HOST, default=(user_input or {}).get(CONF_HOST, "")): str,
-                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-            }
-        )
+                self._host, self._port, self._name = host, REMOTE_PORT, f"XP-Master {host}"
+                return await self.async_step_pair()
+        schema = vol.Schema({vol.Required(CONF_HOST, default=(user_input or {}).get(CONF_HOST, "")): str})
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    async def async_step_pair(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The pairing code from the XP-Master's Netroni panel (Remote Access) and its display."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                reply = await async_pair(
+                    async_get_clientsession(self.hass), self._host, self._port, self._fingerprint,
+                    self.hass.config.location_name or "Home Assistant", user_input["code"].replace(" ", ""),
+                )
+            except CommandError:
+                errors["base"] = "invalid_code"
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            else:
+                data = {
+                    CONF_HOST: self._host, CONF_PORT: self._port,
+                    CONF_FINGERPRINT: self._fingerprint, CONF_TOKEN: reply["token"],
+                }
+                await self.async_set_unique_id(reply["master_id"])
+                if self.source == SOURCE_REAUTH:
+                    self._abort_if_unique_id_mismatch(reason="wrong_master")
+                    return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
+                self._abort_if_unique_id_configured(updates=data)
+                return self.async_create_entry(title=self._name, data=data)
+        fp = self._fingerprint.upper()
+        return self.async_show_form(
+            step_id="pair",
+            data_schema=vol.Schema({vol.Required("code"): str}),
+            errors=errors,
+            description_placeholders={
+                "name": self._name,
+                "fingerprint": " ".join(fp[i:i + 4] for i in range(0, 16, 4)),
+            },
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """The XP-Master refused this Home Assistant (removed in its panel, or a new board)."""
+        self._host, self._port = entry_data[CONF_HOST], entry_data[CONF_PORT]
+        self._name = self._get_reauth_entry().title
+        try:  # a replaced XP-Master has a new certificate: compare it on its display
+            self._fingerprint = await async_fetch_fingerprint(self.hass, self._host, self._port)
+        except CannotConnect:
+            self._fingerprint = entry_data.get(CONF_FINGERPRINT, "")
+        return await self.async_step_pair()
 
     async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
         master_id = discovery_info.properties.get("id")
@@ -82,22 +146,32 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         self._name = discovery_info.name.split(".")[0]
         await self.async_set_unique_id(master_id)
         local = await self._is_this_machine(master_id, self._port)
-        if local:
-            self._host = LOCALHOST  # this machine's own service: independent of the LAN address
+        if not local:
+            return await self._discovered_remote(discovery_info)
+        self._host = LOCALHOST  # this machine's own service: independent of the LAN address
         self._abort_if_unique_id_configured(updates={CONF_HOST: self._host, CONF_PORT: self._port})
         self.context["title_placeholders"] = {"name": self._name}
-        if local and any(
+        if any(
             e.data.get(CONF_HOST) == LOCALHOST and e.unique_id != master_id for e in self._async_current_entries()
         ):
             # This machine's XP-Master already has an entry under another id: Home Assistant was
             # restored from a backup onto a new board. Repairs offers the restore; no second entry.
             return self.async_abort(reason="restore_pending")
-        if local:
-            # An XP-Master's own Netroni service: add it without asking, so the Netroni panel is
-            # there right after Home Assistant's first-time setup.
-            return self.async_create_entry(title=self._name, data={CONF_HOST: self._host, CONF_PORT: self._port})
-        # Another XP-Master on the network: its API only answers on that machine itself.
-        return self.async_abort(reason="not_local")
+        # An XP-Master's own Netroni service: add it without asking, so the Netroni panel is
+        # there right after Home Assistant's first-time setup.
+        return self.async_create_entry(title=self._name, data={CONF_HOST: self._host, CONF_PORT: self._port})
+
+    async def _discovered_remote(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
+        """Another XP-Master on the network: offered for pairing, if it has remote access."""
+        remote_port, fingerprint = discovery_info.properties.get("remote_port"), discovery_info.properties.get("fp")
+        if not remote_port or not fingerprint:
+            self._abort_if_unique_id_configured()
+            return self.async_abort(reason="not_local")  # a release without remote access
+        # Already paired: only its address may have changed.
+        self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
+        self._port, self._fingerprint = int(remote_port), fingerprint
+        self.context["title_placeholders"] = {"name": self._name}
+        return await self.async_step_pair()
 
     async def _is_this_machine(self, master_id: str, port: int) -> bool:
         """Whether the discovered XP-Master is the one on this machine: same id on 127.0.0.1.

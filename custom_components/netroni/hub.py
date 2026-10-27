@@ -6,12 +6,10 @@ import logging
 from collections.abc import Callable
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .client import CannotConnect, CommandError, NetroniClient, async_read_token
+from .client import AuthFailed, CannotConnect, CommandError, async_entry_token, client_for_entry
 from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,13 +24,7 @@ class NetroniHub:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        self.client = NetroniClient(
-            async_get_clientsession(hass),
-            entry.data[CONF_HOST],
-            entry.data[CONF_PORT],
-            on_event=self._on_event,
-            on_disconnect=self._on_disconnect,
-        )
+        self.client = client_for_entry(hass, entry.data, on_event=self._on_event, on_disconnect=self._on_disconnect)
         self.master: dict = {}
         self.config: dict = {}
         self.states: dict[str, dict] = {}
@@ -63,7 +55,7 @@ class NetroniHub:
         await self.client.close()
 
     async def _connect_and_sync(self) -> None:
-        self.client.token = await async_read_token(self.hass)  # read each time: it may be new
+        self.client.token = await async_entry_token(self.hass, self.entry.data)  # the file's may be new
         await self.client.connect()
         try:
             hello = await self.client.call("hello")
@@ -259,6 +251,11 @@ class NetroniHub:
             await asyncio.sleep(delay)
             try:
                 await self._connect_and_sync()
+            except AuthFailed as err:
+                # Remote access removed on the XP-Master, or another certificate: pair again.
+                _LOGGER.warning("XP-Master at %s refused this Home Assistant: %s", self.client.url, err)
+                self.entry.async_start_reauth(self.hass)
+                return
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("reconnect failed: %s", err)
                 delay = min(delay * 2, MAX_RECONNECT_DELAY)

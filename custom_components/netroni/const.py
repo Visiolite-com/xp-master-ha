@@ -2,6 +2,9 @@
 
 DOMAIN = "netroni"
 DEFAULT_PORT = 8765
+REMOTE_PORT = 8766  # remote access: a Home Assistant elsewhere on the LAN, paired (wss://)
+CONF_FINGERPRINT = "fingerprint"  # remote access: the XP-Master's certificate, pinned at pairing
+CONF_TOKEN = "token"  # remote access: this Home Assistant's own token, from the pairing
 MANUFACTURER = "Visiolite"
 API_VERSION = 3  # Netroni service API this integration speaks
 # The Netroni service's API token, mounted into the Home Assistant container on an XP-Master

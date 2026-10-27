@@ -19,6 +19,62 @@ WS_PATH = "/api/ws"
 CALL_TIMEOUT = 10
 
 
+def _pinned(fingerprint: str) -> aiohttp.Fingerprint:
+    return aiohttp.Fingerprint(bytes.fromhex(fingerprint.replace(":", "")))
+
+
+async def async_entry_token(hass, data: dict) -> str | None:
+    """A remote XP-Master: the token from the pairing; this machine's: the token file."""
+    from .const import CONF_TOKEN
+
+    return data.get(CONF_TOKEN) or await async_read_token(hass)
+
+
+def client_for_entry(hass, data: dict, **kwargs) -> NetroniClient:
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    from .const import CONF_FINGERPRINT
+
+    return NetroniClient(
+        async_get_clientsession(hass), data["host"], data["port"], fingerprint=data.get(CONF_FINGERPRINT), **kwargs
+    )
+
+
+async def async_fetch_fingerprint(hass, host: str, port: int) -> str:
+    """The certificate an XP-Master's remote access shows, as hex (trust on first use: the person
+    pairing compares its start with the XP-Master's display). Raises CannotConnect."""
+    import hashlib
+    import ssl
+
+    def fetch() -> str:
+        pem = ssl.get_server_certificate((host, port), timeout=CALL_TIMEOUT)
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
+
+    try:
+        return await hass.async_add_executor_job(fetch)
+    except (OSError, ssl.SSLError, ValueError) as err:
+        raise CannotConnect(f"no remote access on {host}:{port}: {err}") from err
+
+
+async def async_pair(session: aiohttp.ClientSession, host: str, port: int, fingerprint: str, name: str, code: str) -> dict:
+    """Pair with an XP-Master's remote access: {"token", "client_id", "master_id"}. Raises
+    CommandError("pair_invalid") for a wrong code or no open window, CannotConnect otherwise."""
+    url = f"wss://{host}:{port}{WS_PATH}"
+    try:
+        async with asyncio.timeout(CALL_TIMEOUT):
+            async with session.ws_connect(url, ssl=_pinned(fingerprint)) as ws:
+                await ws.send_json({"type": "pair", "name": name, "code": code})
+                msg = await ws.receive()
+    except aiohttp.ServerFingerprintMismatch as err:
+        raise CannotConnect(f"{url} has another certificate") from err
+    except (aiohttp.ClientError, TimeoutError, OSError) as err:
+        raise CannotConnect(f"cannot connect to {url}: {err}") from err
+    reply = json.loads(msg.data) if msg.type is aiohttp.WSMsgType.TEXT else {}
+    if reply.get("type") == "pair_ok":
+        return reply
+    raise CommandError("pair_invalid", reply.get("message", "pairing refused"))
+
+
 async def async_read_token(hass) -> str | None:
     """The Netroni service's API token (TOKEN_FILE), if this machine has one."""
     from .const import TOKEN_FILE
@@ -40,6 +96,10 @@ class CannotConnect(NetroniError):
     """The Master could not be reached or the connection dropped."""
 
 
+class AuthFailed(CannotConnect):
+    """The Master refused this client's token (remote access: not paired, or removed)."""
+
+
 class CommandError(NetroniError):
     """The Master rejected a command."""
 
@@ -57,8 +117,11 @@ class NetroniClient:
         on_event: Callable[[str, dict], None] | None = None,
         on_disconnect: Callable[[], None] | None = None,
         token: str | None = None,
+        fingerprint: str | None = None,
     ) -> None:
-        self.url = f"ws://{host}:{port}{WS_PATH}"
+        # Remote access: TLS, with the XP-Master's certificate pinned by its SHA-256 fingerprint.
+        self._ssl = _pinned(fingerprint) if fingerprint else None
+        self.url = f"{'wss' if fingerprint else 'ws'}://{host}:{port}{WS_PATH}"
         self.token = token  # sent first on every connection (the service refuses clients without it)
         self._session = session
         self._on_event = on_event
@@ -77,9 +140,11 @@ class NetroniClient:
         self._closing = False
         try:
             async with asyncio.timeout(CALL_TIMEOUT):
-                self._ws = await self._session.ws_connect(self.url, heartbeat=30)
+                self._ws = await self._session.ws_connect(self.url, heartbeat=30, ssl=self._ssl)
                 if self.token:
                     await self._authenticate(self._ws)
+        except aiohttp.ServerFingerprintMismatch as err:
+            raise AuthFailed(f"{self.url} has another certificate than the one paired") from err
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             raise CannotConnect(f"cannot connect to {self.url}: {err}") from err
         self._reader = asyncio.create_task(self._read_loop(self._ws))
@@ -91,7 +156,7 @@ class NetroniClient:
         if reply.get("type") != "auth_ok":  # auth_invalid, or the connection closed
             await ws.close()
             self._ws = None
-            raise CannotConnect(f"{self.url} refused the API token")
+            raise AuthFailed(f"{self.url} refused the API token")
 
     async def close(self) -> None:
         """Close on purpose: on_disconnect is not called. connect() may be called again."""
