@@ -1115,8 +1115,8 @@ class NetroniPanel extends HTMLElement {
         ${this._admin ? `<button class="btn secondary" data-action="remote-revoke" data-entry="${entry}" data-client="${esc(c.id)}" data-name="${esc(c.name)}" ${status.busy ? "disabled" : ""}>Remove</button>` : ""}</div>`
     );
     let html = `<h4>Paired Home Assistants</h4>${clients.length ? `<div class="apps">${clients.join("")}</div>` : `<div class="sub pad">None yet.</div>`}`;
-    const fp = (status.fingerprint || "").replace(/:/g, "");
-    const fpShort = fp.slice(0, 16).match(/.{4}/g)?.join(" ") || "";
+    // As on the XP-Master's display while pairing: name, serial, address.
+    const shown = [master.name, master.master_id, status.address].filter(Boolean).map((p) => `<b>${esc(p)}</b>`).join(" · ");
     if (status.pairing && status.pairing.code) {
       const code = `${status.pairing.code.slice(0, 3)} ${status.pairing.code.slice(3)}`;
       html += `
@@ -1126,7 +1126,7 @@ class NetroniPanel extends HTMLElement {
             <p>In the other Home Assistant, add the <b>Netroni XP-Master</b> integration (it may already be offered under Discovered) and enter this code:</p>
             <p><b class="code">${esc(code)}</b></p>
             <div class="sub" id="remote-countdown-${entry}">The code works for 5 minutes.</div>
-            <p class="sub">It is also on the XP-Master's display, with the start of its certificate: ${esc(fpShort)}. Check that the other Home Assistant shows the same.</p>
+            <p class="sub">It is also on the XP-Master's display, with ${shown}. Check that the other Home Assistant shows the same XP-Master.</p>
             <div class="actions"><button class="btn secondary" data-action="remote-cancel" data-entry="${entry}" ${status.busy ? "disabled" : ""}>Cancel</button></div>
           </div>
         </div>`;

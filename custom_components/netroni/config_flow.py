@@ -59,6 +59,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         self._host = ""
         self._port = DEFAULT_PORT
         self._name = ""
+        self._master_id = ""  # its serial, as on its display (unknown when added by address)
         self._fingerprint = ""  # remote access: hex SHA-256 of the XP-Master's certificate
 
     async def _probe(self, host: str, port: int) -> dict:
@@ -117,21 +118,27 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
                     return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
                 self._abort_if_unique_id_configured(updates=data)
                 return self.async_create_entry(title=self._name, data=data)
-        fp = self._fingerprint.upper()
         return self.async_show_form(
             step_id="pair",
             data_schema=vol.Schema({vol.Required("code"): str}),
             errors=errors,
-            description_placeholders={
-                "name": self._name,
-                "fingerprint": " ".join(fp[i:i + 4] for i in range(0, 16, 4)),
-            },
+            description_placeholders={"name": self._name, "master": self._display_check()},
         )
+
+    def _display_check(self) -> str:
+        """What the XP-Master's display shows while pairing (its name, serial and address), to
+        check that this is the XP-Master being paired."""
+        if not self._master_id:  # added by address: the address is all that is known yet
+            return f"**{self._host}**"
+        suffix = f" {self._master_id}"  # the discovered name is "<name> <serial>"
+        name = self._name[: -len(suffix)] if self._name.endswith(suffix) else self._name
+        return " · ".join(f"**{part}**" for part in (name, self._master_id, self._host) if part)
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """The XP-Master refused this Home Assistant (removed in its panel, or a new board)."""
         self._host, self._port = entry_data[CONF_HOST], entry_data[CONF_PORT]
         self._name = self._get_reauth_entry().title
+        self._master_id = self._get_reauth_entry().unique_id or ""
         try:  # a replaced XP-Master has a new certificate: compare it on its display
             self._fingerprint = await async_fetch_fingerprint(self.hass, self._host, self._port)
         except CannotConnect:
@@ -144,6 +151,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="not_netroni")
         self._host, self._port = discovery_info.host, discovery_info.port or DEFAULT_PORT
         self._name = discovery_info.name.split(".")[0]
+        self._master_id = master_id
         await self.async_set_unique_id(master_id)
         local = await self._is_this_machine(master_id, self._port)
         if not local:

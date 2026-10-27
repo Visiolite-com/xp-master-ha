@@ -15,7 +15,7 @@
       },
       "pair": {
         "title": "Pair with {name}",
-        "description": "In the Netroni panel of {name}, open Remote Access and choose **Pair a Home Assistant**. Enter the 6-digit code it shows (also on the XP-Master's display).\n\nCheck that the XP-Master's display shows this certificate: **{fingerprint}**.",
+        "description": "In the Netroni panel of {name}, open Remote Access and choose **Pair a Home Assistant**. Enter the 6-digit code it shows (also on the XP-Master's display).\n\nCheck that the XP-Master's display shows the same XP-Master: {master}.",
         "data": {
           "code": "Pairing code"
         }
