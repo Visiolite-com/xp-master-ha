@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .client import CannotConnect, CommandError, NetroniClient
+from .client import CannotConnect, CommandError, NetroniClient, async_read_token
 from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ class NetroniHub:
         self.states: dict[str, dict] = {}
         self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
         self.update_status: dict = {}  # XP-Master updates (update/status); empty: not supported
+        self.restore_offered = False  # a backup restore is offered: keep entities the settings lack
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
@@ -62,6 +63,7 @@ class NetroniHub:
         await self.client.close()
 
     async def _connect_and_sync(self) -> None:
+        self.client.token = await async_read_token(self.hass)  # read each time: it may be new
         await self.client.connect()
         try:
             hello = await self.client.call("hello")
@@ -326,6 +328,8 @@ class NetroniHub:
     @callback
     def async_remove_stale(self) -> None:
         """Remove entities and XP-Mini devices that the configuration no longer has."""
+        if self.restore_offered:
+            return
         ent_reg = er.async_get(self.hass)
         expected = self.expected_unique_ids()
         for reg_entry in er.async_entries_for_config_entry(ent_reg, self.entry.entry_id):

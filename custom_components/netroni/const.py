@@ -4,6 +4,8 @@ DOMAIN = "netroni"
 DEFAULT_PORT = 8765
 MANUFACTURER = "Visiolite"
 API_VERSION = 3  # Netroni service API this integration speaks
+# The Netroni service's API token, mounted into the Home Assistant container on an XP-Master
+TOKEN_FILE = "/run/netroni/api-token"
 
 PORTS_PER_MINI = 8  # Port 1..8, each with an A and a B output
 

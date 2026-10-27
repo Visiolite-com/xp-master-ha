@@ -19,6 +19,19 @@ WS_PATH = "/api/ws"
 CALL_TIMEOUT = 10
 
 
+async def async_read_token(hass) -> str | None:
+    """The Netroni service's API token (TOKEN_FILE), if this machine has one."""
+    from .const import TOKEN_FILE
+
+    def read() -> str | None:
+        try:
+            return open(TOKEN_FILE, encoding="utf-8").read().strip() or None
+        except OSError:
+            return None
+
+    return await hass.async_add_executor_job(read)
+
+
 class NetroniError(Exception):
     """Base error."""
 
@@ -43,8 +56,10 @@ class NetroniClient:
         port: int,
         on_event: Callable[[str, dict], None] | None = None,
         on_disconnect: Callable[[], None] | None = None,
+        token: str | None = None,
     ) -> None:
         self.url = f"ws://{host}:{port}{WS_PATH}"
+        self.token = token  # sent first on every connection (the service refuses clients without it)
         self._session = session
         self._on_event = on_event
         self._on_disconnect = on_disconnect
@@ -63,9 +78,20 @@ class NetroniClient:
         try:
             async with asyncio.timeout(CALL_TIMEOUT):
                 self._ws = await self._session.ws_connect(self.url, heartbeat=30)
+                if self.token:
+                    await self._authenticate(self._ws)
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             raise CannotConnect(f"cannot connect to {self.url}: {err}") from err
         self._reader = asyncio.create_task(self._read_loop(self._ws))
+
+    async def _authenticate(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        await ws.send_json({"type": "auth", "token": self.token})
+        msg = await ws.receive()
+        reply = json.loads(msg.data) if msg.type is aiohttp.WSMsgType.TEXT else {}
+        if reply.get("type") != "auth_ok":  # auth_invalid, or the connection closed
+            await ws.close()
+            self._ws = None
+            raise CannotConnect(f"{self.url} refused the API token")
 
     async def close(self) -> None:
         """Close on purpose: on_disconnect is not called. connect() may be called again."""

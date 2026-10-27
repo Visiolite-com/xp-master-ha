@@ -9,11 +9,16 @@ import voluptuous as vol
 
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
-from .client import NetroniError
+from .backup import RESTORE_ISSUE, async_read_backup
+from .client import NetroniClient, NetroniError, async_read_token
+from .const import DOMAIN
 from .replace import async_replace, replace_summary
 
 EXTRA = "extra"  # the answer "it is a new XP-Mini", not a replacement
@@ -22,7 +27,49 @@ EXTRA = "extra"  # the answer "it is a new XP-Mini", not a replacement
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data: dict[str, Any] | None) -> RepairsFlow:
     if (data or {}).get("kind") == "replace":
         return ReplacementFlow(data or {})
+    if (data or {}).get("kind") == "restore":
+        return RestoreFlow(data or {})
     return RemoveOfflineMiniFlow(data or {})
+
+
+class RestoreFlow(RepairsFlow):
+    """Restore the XP-Master's settings saved in Home Assistant's backup (backup.py)."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._entry_id = data.get("entry_id", "")
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None:
+            return self.async_abort(reason="resolved")
+        backup = await async_read_backup(self.hass, entry.unique_id)
+        if backup is None:
+            return self.async_abort(reason="resolved")
+        if user_input is None:
+            return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}))
+        # Straight to the service on this machine: the entry may not be set up (another id).
+        session = async_get_clientsession(self.hass)
+        client = NetroniClient(session, entry.data["host"], entry.data["port"], token=await async_read_token(self.hass))
+        try:
+            await client.connect()
+            await client.call("backup/restore", backup=backup)
+        except NetroniError as err:
+            return self.async_abort(reason="restore_failed", description_placeholders={"error": str(err)})
+        finally:
+            await client.close()
+        ir.async_delete_issue(self.hass, DOMAIN, RESTORE_ISSUE + self._entry_id)
+        # The service restarts with the restored settings; set the entry up again after it.
+        entry_id = self._entry_id
+
+        @callback
+        def reload(_now) -> None:
+            self.hass.config_entries.async_schedule_reload(entry_id)
+
+        async_call_later(self.hass, 10, reload)
+        return self.async_create_entry(data={})
 
 
 class ReplacementFlow(RepairsFlow):

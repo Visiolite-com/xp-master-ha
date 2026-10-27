@@ -24,6 +24,7 @@ from .const import (
     SIGNAL_HUBS_CHANGED,
 )
 from .hub import NetroniHub
+from .backup import async_check_restore
 from .panel import PANEL_URL_PATH, async_setup_panel
 from .sync import async_setup_label_sync
 from .websocket import async_setup_websocket
@@ -75,6 +76,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         await hub.async_start()
     except (CannotConnect, CommandError) as err:
         raise ConfigEntryNotReady(str(err)) from err
+    # Restored from a backup onto a new or re-flashed XP-Master: offer the saved settings (Repairs).
+    # Another XP-Master id than this entry's is not set up: it would replace every device.
+    other, restore_offered = await async_check_restore(hass, entry, hub.master_id, hub.config.get("version", 0))
+    if other:
+        await hub.async_stop()
+        raise ConfigEntryNotReady(f"the XP-Master is now {hub.master_id}, not {entry.unique_id}: see Repairs")
     entry.runtime_data = hub
 
     master_device = dr.async_get(hass).async_get_or_create(
@@ -91,6 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
 
     # Entities and devices that no longer match the configuration (lights of a port that was
     # paired or unpaired, removed XP-Minis, older integration versions) are removed.
+    hub.restore_offered = restore_offered  # until it is done, the backed-up settings' entities stay
     hub.async_remove_stale()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

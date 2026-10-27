@@ -23,7 +23,9 @@
     },
     "abort": {
       "already_configured": "This XP-Master is already configured.",
-      "not_netroni": "The discovered device is not an XP-Master."
+      "not_netroni": "The discovered device is not an XP-Master.",
+      "not_local": "That XP-Master is another device: Home Assistant connects only to the XP-Master it runs on.",
+      "restore_pending": "This XP-Master is already set up under its earlier id: see Settings → Repairs to restore its settings."
     }
   },
   "options": {
@@ -220,6 +222,26 @@
           "replace_failed": "The XP-Mini was not replaced: {error}"
         }
       }
+    },
+    "restore": {
+      "title": "Restore the settings of {name}?",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Restore the settings of {name}?",
+            "description": "Home Assistant's backup holds settings of this XP-Master that it doesn't have: configuration version {version} with {minis} XP-Minis (it has version {current}). This happens after restoring a backup onto a new or re-flashed XP-Master.\n\nRestoring brings back its XP-Minis, DMX blocks, light names, areas, groups and the lights' last state. The Netroni service restarts; the lights keep their entities.\n\nSubmit to restore.",
+            "submit": "Restore"
+          }
+        },
+        "abort": {
+          "resolved": "Nothing to restore any more.",
+          "restore_failed": "The settings were not restored: {error}"
+        }
+      }
+    },
+    "other_master": {
+      "title": "{name} is another XP-Master now",
+      "description": "This XP-Master's Netroni service now has id {new}, but its devices in Home Assistant belong to {old}, and Home Assistant's backup has no settings of {old} to restore. The XP-Master is not set up, so its devices and entities are kept.\n\nRestore a Home Assistant backup that was made on {old}, or delete this XP-Master under Settings → Devices & services and add it again."
     }
   }
 }

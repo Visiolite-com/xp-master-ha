@@ -23,7 +23,7 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .client import CannotConnect, CommandError, NetroniClient, NetroniError
+from .client import CannotConnect, CommandError, NetroniClient, NetroniError, async_read_token
 from .const import DEFAULT_PORT, DOMAIN, PORTS_PER_MINI
 
 LOCALHOST = "127.0.0.1"  # Home Assistant and the Netroni service share the host network
@@ -45,7 +45,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         self._name = ""
 
     async def _probe(self, host: str, port: int) -> dict:
-        client = NetroniClient(async_get_clientsession(self.hass), host, port)
+        client = NetroniClient(async_get_clientsession(self.hass), host, port, token=await async_read_token(self.hass))
         await client.connect()
         try:
             return await client.call("hello")
@@ -86,11 +86,18 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
             self._host = LOCALHOST  # this machine's own service: independent of the LAN address
         self._abort_if_unique_id_configured(updates={CONF_HOST: self._host, CONF_PORT: self._port})
         self.context["title_placeholders"] = {"name": self._name}
+        if local and any(
+            e.data.get(CONF_HOST) == LOCALHOST and e.unique_id != master_id for e in self._async_current_entries()
+        ):
+            # This machine's XP-Master already has an entry under another id: Home Assistant was
+            # restored from a backup onto a new board. Repairs offers the restore; no second entry.
+            return self.async_abort(reason="restore_pending")
         if local:
             # An XP-Master's own Netroni service: add it without asking, so the Netroni panel is
             # there right after Home Assistant's first-time setup.
             return self.async_create_entry(title=self._name, data={CONF_HOST: self._host, CONF_PORT: self._port})
-        return await self.async_step_zeroconf_confirm()
+        # Another XP-Master on the network: its API only answers on that machine itself.
+        return self.async_abort(reason="not_local")
 
     async def _is_this_machine(self, master_id: str, port: int) -> bool:
         """Whether the discovered XP-Master is the one on this machine: same id on 127.0.0.1.

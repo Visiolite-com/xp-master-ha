@@ -872,8 +872,8 @@ class NetroniPanel extends HTMLElement {
             <h3>${esc(mini.name)}</h3>
             <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.hardware_uid && mini.hardware_uid !== mini.uid ? ` (unit ${esc(mini.hardware_uid)})` : ""}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
           </div>
-          ${this._chip(mini.online, "Online", "Offline")}
           ${gear}
+          ${this._chip(mini.online, "Online", "Offline")}
           ${mini.device_id ? this._deviceLink(mini.device_id) : ""}
         </div>
         <div class="facts">
