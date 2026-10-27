@@ -73,7 +73,9 @@ class NetroniHub:
             await self.client.close()
             raise
         changed = bool(self.config) and _structure(config) != _structure(self.config)
+        old = self.config
         self.master, self.config, self.states = hello["master"], config, states
+        self._apply_renames(old)
         self.group_states = group_states
         self.update_status = update_status
         self.available = True
@@ -82,6 +84,12 @@ class NetroniHub:
         self.async_update_offline_issues()
         self._update_hidden()
         self._notify()
+
+    @callback
+    def _apply_renames(self, old: dict) -> None:
+        from .sync import async_apply_renames  # avoid an import cycle
+
+        async_apply_renames(self.hass, self, old, self.config)
 
     @callback
     def _update_hidden(self) -> None:
@@ -111,6 +119,18 @@ class NetroniHub:
 
     def mini(self, uid: str) -> dict | None:
         return next((m for m in self.config.get("minis", []) if m["uid"] == uid), None)
+
+    def device(self, identifier: str) -> dr.DeviceEntry | None:
+        """This entry's device for the XP-Master's id or an XP-Mini's uid. Identifiers are unique
+        within a config entry only: two XP-Masters can have XP-Minis with the same uid."""
+        return next(
+            (
+                device
+                for device in dr.async_entries_for_config_entry(dr.async_get(self.hass), self.entry.entry_id)
+                if (DOMAIN, identifier) in device.identifiers
+            ),
+            None,
+        )
 
     def mini_online(self, uid: str) -> bool:
         mini = self.mini(uid)
@@ -207,7 +227,9 @@ class NetroniHub:
                 self.group_states.update(await self._group_states())
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("state refresh failed: %s", err)
-        self.config = config
+        old, self.config = self.config, config
+        self.master = config.get("master") or self.master
+        self._apply_renames(old)
         if changed:
             self._apply_structure()
         self.async_update_offline_issues()

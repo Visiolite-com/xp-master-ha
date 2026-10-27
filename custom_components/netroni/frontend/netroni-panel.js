@@ -1036,7 +1036,9 @@ class NetroniPanel extends HTMLElement {
     const add = this._admin
       ? `<div class="actions"><button class="btn" data-action="new-group" data-entry="${master.entry_id}">New group</button></div>`
       : "";
-    return intro + groups.map((g) => this._groupCard(master, g)).join("") + add;
+    // With several XP-Masters: each one's groups under its name, with room before the next one.
+    const title = this._data.masters.length > 1 ? `<h2 class="master-title">${esc(master.name)}</h2>` : "";
+    return `<div class="master-block">${title}${intro}${groups.map((g) => this._groupCard(master, g)).join("")}${add}</div>`;
   }
 
   _groupCard(master, group) {
@@ -1508,6 +1510,8 @@ const STYLE = `
   .card.mini.focused { box-shadow: 0 0 0 2px var(--primary-color); }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
+  .master-block + .master-block { margin-top: 40px; }
+  .master-title { margin: 0 0 12px 4px; }
   .apps { display: flex; flex-direction: column; gap: 4px; }
   .app { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .app:last-child { border-bottom: 0; }

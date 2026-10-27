@@ -1,8 +1,11 @@
-"""Keep light names and areas on the Master, so a fresh Home Assistant can rebuild from it.
+"""Keep names and areas on the Master, so a fresh Home Assistant can rebuild from it and every
+Home Assistant the XP-Master is in shows the same names.
 
 HA -> Master: when a user renames a light or moves it (or its XP-Mini) to another area,
-push the name and area name with light/update.
-Master -> HA: when a light entity first appears with no area, apply the area stored on the Master.
+push the name and area name with light/update; renaming the XP-Master or an XP-Mini device
+pushes master/update or mini/update.
+Master -> HA: when a light entity first appears with no area, apply the area stored on the Master;
+a name changed on the Master (from another Home Assistant) replaces the name given here.
 """
 from __future__ import annotations
 
@@ -120,6 +123,60 @@ async def async_push_label(hass: HomeAssistant, hub: NetroniHub, entity_id: str)
 
 
 @callback
+def async_apply_renames(hass: HomeAssistant, hub: NetroniHub, old: dict, new: dict) -> None:
+    """Names the Master changed between two configurations replace the names given here.
+
+    Only changes count: a name this Home Assistant pushed comes back equal to its own, and one
+    given here that the Master doesn't have yet (being pushed) is left alone."""
+    if not old:
+        return
+    dev_reg, ent_reg = dr.async_get(hass), er.async_get(hass)
+
+    def rename_device(identifier: str, name: str) -> None:
+        device = hub.device(identifier)
+        if device is None:
+            return
+        by_user = None if device.name_by_user and device.name_by_user != name else device.name_by_user
+        if (device.name, device.name_by_user) != (name, by_user):
+            dev_reg.async_update_device(device.id, name=name, name_by_user=by_user)
+
+    old_master = (old.get("master") or {}).get("name")
+    new_master = (new.get("master") or {}).get("name")
+    if new_master and new_master != old_master:
+        rename_device(hub.master_id, new_master)
+    old_minis = {m["uid"]: m.get("name") for m in old.get("minis", [])}
+    for mini in new.get("minis", []):
+        if mini.get("name") and mini["uid"] in old_minis and mini["name"] != old_minis[mini["uid"]]:
+            rename_device(mini["uid"], mini["name"])
+    old_lights = {l["id"]: l.get("name") or "" for l in old.get("lights", [])}
+    for light in new.get("lights", []):
+        name = light.get("name") or ""
+        if not name or light["id"] not in old_lights or name == old_lights[light["id"]]:
+            continue
+        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_{light['id']}")
+        entry = ent_reg.async_get(entity_id) if entity_id else None
+        if entry is not None and entry.name != name:
+            ent_reg.async_update_entity(entity_id, name=name)
+
+
+async def async_push_device_name(hass: HomeAssistant, hub: NetroniHub, device_id: str) -> None:
+    """The user renamed the XP-Master or an XP-Mini in Home Assistant: store it on the XP-Master."""
+    device = dr.async_get(hass).async_get(device_id)
+    ident = next((i[1] for i in device.identifiers if i[0] == DOMAIN), None) if device else None
+    name = device.name_by_user if device else None
+    if not ident or not name:  # cleared: the XP-Master keeps its name
+        return
+    try:
+        if ident == hub.master_id:
+            if name != hub.config.get("master", {}).get("name"):
+                await hub.client.call("master/update", name=name)
+        elif (mini := hub.mini(ident)) is not None and name != mini.get("name"):
+            await hub.client.call("mini/update", uid=ident, name=name)
+    except NetroniError as err:
+        _LOGGER.warning("could not store the name of %s on the XP-Master: %s", name, err)
+
+
+@callback
 def async_setup_label_sync(
     hass: HomeAssistant, entry: ConfigEntry, hub: NetroniHub
 ) -> Callable[[], None]:
@@ -156,10 +213,19 @@ def async_setup_label_sync(
     @callback
     def on_device_update(event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:
         data = event.data
-        if data["action"] != "update" or "area_id" not in data.get("changes", {}):
+        changes = data.get("changes", {}) if data["action"] == "update" else {}
+        if not ({"area_id", "name_by_user"} & set(changes)):
             return
         device = dev_reg.async_get(data["device_id"])
         if device is None or not any(i[0] == DOMAIN for i in device.identifiers):
+            return
+        if device not in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            return  # another XP-Master's
+        if "name_by_user" in changes:
+            entry.async_create_background_task(
+                hass, async_push_device_name(hass, hub, data["device_id"]), "netroni push device name"
+            )
+        if "area_id" not in changes:
             return
         for entity_id in light_entities(data["device_id"]):
             entry.async_create_background_task(hass, push(entity_id), "netroni push label")

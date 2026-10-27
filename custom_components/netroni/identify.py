@@ -25,11 +25,12 @@ def port_label(data: dict) -> str:
 @callback
 def async_notify_port_identified(hass: HomeAssistant, hub: NetroniHub, data: dict) -> None:
     ent_reg = er.async_get(hass)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, data["uid"])})
+    device = hub.device(data["uid"])
     mini = hub.mini(data["uid"]) or {}
     area = ar.async_get(hass).async_get_area(device.area_id) if device and device.area_id else None
+    name = (device.name_by_user or device.name) if device else mini.get("name", data["uid"])
 
-    where = f"**{mini.get('name', data['uid'])}**"
+    where = f"**{name}**"
     if area:
         where += f" ({area.name})"
     lines = [f"{where} · **{port_label(data)}** · {dt_util.now().strftime('%H:%M:%S')}", ""]

@@ -117,7 +117,9 @@ def _overview(hass: HomeAssistant) -> dict:
                     "kind": light["kind"],
                     "default_name": light["default_name"],
                     "entity_id": entity_id,
-                    "name": entry.name if entry else None,  # None: not named yet
+                    # None: not named yet. A name stored on the XP-Master (given in another
+                    # Home Assistant before this one was added) counts as named.
+                    "name": (entry.name if entry else None) or light.get("name") or None,
                     "area_id": area_id,
                     "area": area_name(area_id),
                     "min_kelvin": light.get("min_kelvin"),  # tunable white: the port's colour range
@@ -144,7 +146,9 @@ def _overview(hass: HomeAssistant) -> dict:
         masters.append(
             {
                 "entry_id": hub.entry.entry_id,
-                "name": hub.master.get("name", "XP-Master"),
+                # Its name in Home Assistant (renamed on its device page), as for the XP-Minis.
+                "name": master_device.name_by_user or master_device.name
+                if master_device else hub.master.get("name", "XP-Master"),
                 "master_id": hub.master_id,
                 "host": hub.entry.data[CONF_HOST],
                 "connected": hub.available,
