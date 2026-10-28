@@ -1445,8 +1445,7 @@ const STYLE = `
   .tw-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
   .tw-row .tw { margin-top: 0; }
   .range { margin-left: auto; font: inherit; font-size: 12px; white-space: nowrap; padding: 2px 8px; border-radius: 999px; cursor: pointer;
-    /* The Visiolite strip's range (the default) in green; any other range in amber (.custom). */
-    color: var(--ok); background: rgba(var(--rgb-success-color, 67, 160, 71), .12); border: 1px solid rgba(var(--rgb-success-color, 67, 160, 71), .45); }
+    color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), .1); border: 1px solid rgba(var(--rgb-primary-color, 3, 169, 244), .35); }
   span.range { cursor: default; }
   .range.custom { color: #e65100; background: rgba(255, 152, 0, .12); border-color: rgba(255, 152, 0, .45); }
   .field-row { display: flex; gap: 12px; }
