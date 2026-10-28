@@ -1,6 +1,6 @@
 <img src="https://raw.githubusercontent.com/Visiolite-com/xp-master-ha/main/custom_components/netroni/brand/logo.png" alt="Netroni" height="48">
 
-# Netroni XP-Master for Home Assistant
+# Visiolite Netroni XP-Master for Home Assistant
 
 Control the lights of a Visiolite **Netroni XP-Master** installation from Home Assistant. Every
 output of every XP-Mini becomes a light you can name, put in an area, group and automate. Changes
