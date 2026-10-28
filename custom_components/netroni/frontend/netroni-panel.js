@@ -1420,7 +1420,12 @@ const STYLE = `
   .banner.info > ha-icon { color: var(--primary-color); }
   .banner.error { background: rgba(219, 68, 55, .12); }
   .banner.error > ha-icon { color: var(--bad); }
-  .ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 16px; }
+  /* 8 ports in even rows: 4 + 4 where the card is wide enough, else 2 per row, or 1 on a phone; never 3 or 5.
+     The card's own width decides (a container), so the sidebar open or closed doesn't matter. */
+  .card.mini { container-type: inline-size; }
+  .ports { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+  @container (max-width: 880px) { .ports { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @container (max-width: 440px) { .ports { grid-template-columns: minmax(0, 1fr); } }
   .port { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px;
     transition: border-color .3s, box-shadow .3s; }
   .port.identified { border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(var(--rgb-primary-color, 3, 169, 244), .3);
