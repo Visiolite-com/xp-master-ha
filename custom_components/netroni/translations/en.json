@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Add an XP-Master",
-        "description": "The address of the XP-Master (its name, e.g. xpm-e177.local, or its IP address). For an XP-Master other than the one this Home Assistant runs on, open a pairing window first: in that XP-Master's Netroni panel, Remote Access → Pair a Home Assistant.",
+        "description": "The address of the XP-Master (its name, e.g. xpm-e177.local, or its IP address). For an XP-Master other than the one this Home Assistant runs on, open a pairing window first: in that XP-Master's Netroni panel, Remote Access → Pair a Home Assistant or app.",
         "data": {
           "host": "Host"
         }
@@ -15,7 +15,7 @@
       },
       "pair": {
         "title": "Pair with {name}",
-        "description": "In the Netroni panel of {name}, open Remote Access and choose **Pair a Home Assistant**. Enter the 6-digit code it shows (also on the XP-Master's display).\n\nCheck that the XP-Master's display shows the same XP-Master: {master}.",
+        "description": "In the Netroni panel of {name}, open Remote Access and choose **Pair a Home Assistant or app**. Enter the 6-digit code it shows (also on the XP-Master's display).\n\nCheck that the XP-Master's display shows the same XP-Master: {master}.",
         "data": {
           "code": "Pairing code"
         }

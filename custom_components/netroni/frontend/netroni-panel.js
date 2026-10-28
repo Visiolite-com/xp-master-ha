@@ -1099,7 +1099,7 @@ class NetroniPanel extends HTMLElement {
           <ha-icon class="head-icon" icon="mdi:home-import-outline"></ha-icon>
           <div class="grow">
             <h2>Remote Access</h2>
-            <div class="sub">${esc(master.name)} · Another Home Assistant on your network can run the Netroni integration and control this XP-Master.</div>
+            <div class="sub">${esc(master.name)} · Other Home Assistants and the Netroni app on your network can control this XP-Master.</div>
           </div>
         </div>
         ${body}
@@ -1114,7 +1114,7 @@ class NetroniPanel extends HTMLElement {
         <div class="grow"><div>${esc(c.name)}</div><div class="sub">Paired ${esc(when(c.created))} · last seen ${esc(when(c.last_seen))}</div></div>
         ${this._admin ? `<button class="btn secondary" data-action="remote-revoke" data-entry="${entry}" data-client="${esc(c.id)}" data-name="${esc(c.name)}" ${status.busy ? "disabled" : ""}>Remove</button>` : ""}</div>`
     );
-    let html = `<h4>Paired Home Assistants</h4>${clients.length ? `<div class="apps">${clients.join("")}</div>` : `<div class="sub pad">None yet.</div>`}`;
+    let html = `<h4>Paired Home Assistants and apps</h4>${clients.length ? `<div class="apps">${clients.join("")}</div>` : `<div class="sub pad">None yet.</div>`}`;
     // As on the XP-Master's display while pairing: name, serial, address.
     const shown = [master.name, master.master_id, status.address].filter(Boolean).map((p) => `<b>${esc(p)}</b>`).join(" · ");
     if (status.pairing && status.pairing.code) {
@@ -1122,11 +1122,11 @@ class NetroniPanel extends HTMLElement {
       html += `
         <div class="qr-box">
           <div class="grow">
-            <h4>Pair a Home Assistant</h4>
-            <p>In the other Home Assistant, add the <b>Netroni XP-Master</b> integration (it may already be offered under Discovered) and enter this code:</p>
+            <h4>Pair a Home Assistant or app</h4>
+            <p>In the other Home Assistant, add the <b>Netroni XP-Master</b> integration (it may already be offered under Discovered); in the Netroni app, tap the XP-Master. Then enter this code:</p>
             <p><b class="code">${esc(code)}</b></p>
             <div class="sub" id="remote-countdown-${entry}">The code works for 5 minutes.</div>
-            <p class="sub">It is also on the XP-Master's display, with ${shown}. Check that the other Home Assistant shows the same XP-Master.</p>
+            <p class="sub">It is also on the XP-Master's display, with ${shown}. Check that the other Home Assistant or the app shows the same XP-Master.</p>
             <div class="actions"><button class="btn secondary" data-action="remote-cancel" data-entry="${entry}" ${status.busy ? "disabled" : ""}>Cancel</button></div>
           </div>
         </div>`;
@@ -1134,11 +1134,11 @@ class NetroniPanel extends HTMLElement {
       html += `<div class="sub pad">A pairing window is open.</div>`;
     } else if (this._admin) {
       html += `<div class="actions"><button class="btn" data-action="remote-pair" data-entry="${entry}" ${status.busy ? "disabled" : ""}>
-        ${status.busy ? "Opening…" : "Pair a Home Assistant"}</button></div>`;
+        ${status.busy ? "Opening…" : "Pair a Home Assistant or app"}</button></div>`;
     } else {
-      html += `<div class="sub pad">An administrator can pair a Home Assistant.</div>`;
+      html += `<div class="sub pad">An administrator can pair a Home Assistant or app.</div>`;
     }
-    html += `<p class="sub pad">The XP-Master only accepts remote connections while a Home Assistant is paired or a pairing window is open. The connection is encrypted; each paired Home Assistant has its own key and can be removed here.</p>`;
+    html += `<p class="sub pad">The XP-Master only accepts remote connections while a Home Assistant or app is paired or a pairing window is open. The connection is encrypted; each has its own key and can be removed here.</p>`;
     return html;
   }
 
