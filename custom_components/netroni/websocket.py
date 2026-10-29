@@ -41,6 +41,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_update_light,
         ws_remove_mini,
         ws_restart_mini,
+        ws_set_dmx_start,
         ws_factory_reset_mini,
         ws_replace_mini,
         ws_dmx_snapshot,
@@ -154,6 +155,7 @@ def _overview(hass: HomeAssistant) -> dict:
                 "connected": hub.available,
                 "config_version": hub.config.get("version"),
                 # XP-Master release and updates (the Firmware update entity has the details)
+                "product": hub.product,
                 "release": hub.update_status.get("installed"),
                 "update_available": (hub.update_status.get("latest") or {}).get("release")
                 if hub.update_status.get("update_available") else None,
@@ -413,6 +415,21 @@ async def _mini_command(connection: websocket_api.ActiveConnection, msg: dict, h
 @websocket_api.async_response
 async def ws_restart_mini(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/restart", uid=msg["uid"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/set_dmx_start",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("start"): vol.All(int, vol.Range(min=1, max=512)),
+    }
+)
+@websocket_api.async_response
+async def ws_set_dmx_start(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Move an XP-Mini to another whole DMX block (checked by the XP-Master or Bridge Stick)."""
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/set_dmx_start", uid=msg["uid"], start=msg["start"])
 
 
 @websocket_api.require_admin

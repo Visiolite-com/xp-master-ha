@@ -259,6 +259,12 @@ class NetroniPanel extends HTMLElement {
         this._closeDialog();
         this._restartMini(d.entry, d.uid);
         break;
+      case "dmx":
+        this._openDialog({ kind: "dmx", entry: d.entry, uid: d.uid });
+        break;
+      case "confirm-dmx":
+        this._setDmxStart();
+        break;
       case "reset":
         this._openDialog({ kind: "reset", entry: d.entry, uid: d.uid });
         break;
@@ -494,6 +500,18 @@ class NetroniPanel extends HTMLElement {
     await this._run(async () => {
       const result = await this._call({ type: "netroni/factory_reset_mini", entry_id: entry, uid });
       this._toast(result?.found_again ? `${name} was reset: back as a new XP-Mini at DMX ${result.dmx_start}` : `${name} was reset`);
+    });
+  }
+
+  async _setDmxStart() {
+    const { entry, uid } = this._dialog;
+    const start = Number(this.shadowRoot.getElementById("dmx-start")?.value);
+    const mini = this._mini(entry, uid);
+    if (!start || start === mini?.dmx_start) return;
+    const name = this._miniName(this._master(entry), uid);
+    await this._run(async () => {
+      await this._call({ type: "netroni/set_dmx_start", entry_id: entry, uid, start });
+      this._toast(`${name} now uses DMX ${start}–${start + DMX_BLOCK - 1}`);
     });
   }
 
@@ -882,7 +900,7 @@ class NetroniPanel extends HTMLElement {
           <ha-icon class="head-icon" icon="netroni:logo"></ha-icon>
           <div class="grow">
             <h2>${esc(master.name)}</h2>
-            <div class="sub">XP-Master · ${esc(master.master_id)}${master.area ? ` · ${esc(master.area)}` : ""}</div>
+            <div class="sub">${esc(master.product || "XP-Master")} · ${esc(master.master_id)}${master.area ? ` · ${esc(master.area)}` : ""}</div>
           </div>
           ${this._chip(master.connected, "Connected", "Not connected")}
           ${master.device_id ? this._deviceLink(master.device_id) : ""}
@@ -1328,10 +1346,30 @@ class NetroniPanel extends HTMLElement {
       title = esc(mini?.name || d.uid);
       body = `<div class="menu">
         ${item("restart", "mdi:restart", "Restart", "Keeps all its settings; back within a few seconds.", mini?.online)}
+        ${item("dmx", "mdi:tune-vertical", "DMX block…", mini?.online ? `Channels ${mini.dmx_start}–${mini.dmx_start + DMX_BLOCK - 1}; change it to use another range on a DMX console.` : "Only when it is online.", mini?.online)}
         ${item("reset", "mdi:backup-restore", "Factory reset…", "Forgets everything; found again as a new XP-Mini.", mini?.online, true)}
         ${item("replace", "mdi:swap-horizontal", "Replace…", mini?.online ? "Only when it is offline: a new XP-Mini takes its place." : "A new XP-Mini takes its place.", !mini?.online && spares)}
         ${item("remove", "mdi:delete-outline", "Remove…", mini?.online ? "Only when it is offline (disconnected for good)." : "Forget it: lights, names and DMX block.", !mini?.online, true)}
       </div>`;
+    } else if (d.kind === "dmx") {
+      const master = this._master(d.entry);
+      const mini = this._mini(d.entry, d.uid);
+      const name = esc(mini?.name || d.uid);
+      const others = (master?.minis || []).filter((m) => m.uid !== d.uid);
+      const range = (s) => `${s}–${s + DMX_BLOCK - 1}`;
+      const blocks = [];
+      for (let s = 1; s + DMX_BLOCK - 1 <= DMX_SLOTS; s += DMX_BLOCK) {
+        if (s === mini?.dmx_start || !others.some((m) => Math.abs(s - m.dmx_start) < DMX_BLOCK)) blocks.push(s);
+      }
+      if (mini && !blocks.includes(mini.dmx_start)) blocks.unshift(mini.dmx_start); // a start of its own (not a whole block)
+      title = `DMX block of ${name}`;
+      body = `<p>${name} listens to DMX channels ${mini ? range(mini.dmx_start) : "?"}. Pick another free block of ${DMX_BLOCK} channels:</p>
+        <label class="field"><span>DMX channels</span>
+          <select id="dmx-start">${blocks
+            .map((s) => `<option value="${s}" ${s === mini?.dmx_start ? "selected" : ""}>${range(s)}${s === mini?.dmx_start ? " (current)" : ""}</option>`)
+            .join("")}</select></label>
+        <p class="sub">A DMX console patched to ${mini ? range(mini.dmx_start) : "the old channels"} no longer controls it. Its lights, names and groups stay as they are.</p>`;
+      action = `<button class="btn" data-action="confirm-dmx" ${this._busy ? "disabled" : ""}>Move</button>`;
     } else if (d.kind === "reset") {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);

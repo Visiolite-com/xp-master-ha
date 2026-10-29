@@ -223,9 +223,10 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
-        return self.async_show_menu(
-            step_id="init", menu_options=["tunable_white", "matter", "restart", "replace", "factory_reset", "updates"]
-        )
+        options = ["tunable_white", "matter", "restart", "replace", "factory_reset", "updates"]
+        if self._hub.kind == "stick":  # a Bridge Stick has no Matter bridge and no updates (yet)
+            options = [o for o in options if o not in ("matter", "updates")]
+        return self.async_show_menu(step_id="init", menu_options=options, description_placeholders={"product": self._hub.product})
 
     # --- XP-Master updates: stable or beta releases ---
 
@@ -424,7 +425,7 @@ class NetroniOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="reset_confirm",
             data_schema=vol.Schema({}),
-            description_placeholders={"mini": mini["name"], "uid": self._uid},
+            description_placeholders={"mini": mini["name"], "uid": self._uid, "product": self._hub.product},
         )
 
     async def async_step_ports(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

@@ -26,6 +26,7 @@ class NetroniHub:
         self.entry = entry
         self.client = client_for_entry(hass, entry.data, on_event=self._on_event, on_disconnect=self._on_disconnect)
         self.master: dict = {}
+        self.kind = "master"  # "stick": a Netroni Bridge Stick in the XP-Master's place (hello)
         self.config: dict = {}
         self.states: dict[str, dict] = {}
         self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
@@ -44,6 +45,11 @@ class NetroniHub:
     @property
     def master_id(self) -> str:
         return self.master["id"]
+
+    @property
+    def product(self) -> str:
+        """What it is, in texts: "XP-Master" or "Bridge Stick"."""
+        return "Bridge Stick" if self.kind == "stick" else "XP-Master"
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -75,6 +81,7 @@ class NetroniHub:
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         old = self.config
         self.master, self.config, self.states = hello["master"], config, states
+        self.kind = hello.get("kind") or "master"
         self._apply_renames(old)
         self.group_states = group_states
         self.update_status = update_status

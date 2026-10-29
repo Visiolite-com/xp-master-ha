@@ -37,7 +37,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "XP-Master Configuration",
+        "title": "{product} Configuration",
         "menu_options": {
           "tunable_white": "Configure ports",
           "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
@@ -77,7 +77,7 @@
       },
       "reset_confirm": {
         "title": "Reset {mini} to factory settings?",
-        "description": "{mini} ({uid}) forgets all its settings and its lights go off. The XP-Master forgets it too: it is found again as a new XP-Mini, with default light names, no areas and the first free DMX block. Automations, scenes and dashboards that use its lights may have to be updated.\n\nTo restart it without losing anything, use its Restart button instead.\n\nSubmit to reset."
+        "description": "{mini} ({uid}) forgets all its settings and its lights go off. The {product} forgets it too: it is found again as a new XP-Mini, with default light names, no areas and the first free DMX block. Automations, scenes and dashboards that use its lights may have to be updated.\n\nTo restart it without losing anything, use its Restart button instead.\n\nSubmit to reset."
       },
       "replace": {
         "title": "Replace an XP-Mini",
