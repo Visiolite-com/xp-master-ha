@@ -1061,7 +1061,9 @@ class NetroniPanel extends HTMLElement {
         </div>
         ${hidden}
       </section>`;
-    return closed ? head : head + master.minis.map((mini) => this._miniCard(master, mini)).join("");
+    // By DMX start address, as a console is patched; one without an address (DMX full) last.
+    const byDmx = [...master.minis].sort((a, b) => (a.dmx_start || Infinity) - (b.dmx_start || Infinity));
+    return closed ? head : head + byDmx.map((mini) => this._miniCard(master, mini)).join("");
   }
 
   /** An XP-Mini's firmware, as the XP-Master's: an update available, or how it is going. */
