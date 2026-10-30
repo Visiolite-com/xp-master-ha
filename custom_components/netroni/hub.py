@@ -31,6 +31,7 @@ class NetroniHub:
         self.states: dict[str, dict] = {}
         self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
         self.update_status: dict = {}  # XP-Master updates (update/status); empty: not supported
+        self.mini_updates: dict[str, dict] = {}  # uid -> its last mini_update_status (firmware updates)
         self.restore_offered = False  # a backup restore is offered: keep entities the settings lack
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
@@ -81,6 +82,8 @@ class NetroniHub:
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         old = self.config
         self.master, self.config, self.states = hello["master"], config, states
+        self.mini_updates = {m["uid"]: {"uid": m["uid"], **m["firmware_update"]}
+                             for m in config.get("minis", []) if m.get("firmware_update")}
         self.kind = hello.get("kind") or "master"
         self._apply_renames(old)
         self.group_states = group_states
@@ -158,6 +161,7 @@ class NetroniHub:
             )
             ids.add(f"{prefix}{mini['uid']}/port_identified")
             ids.add(f"{prefix}{mini['uid']}/restart")
+            ids.add(f"{prefix}{mini['uid']}/firmware")
             ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 
@@ -197,6 +201,9 @@ class NetroniHub:
                 self.async_update_offline_issues()
                 self._notify()
             # An XP-Mini new to the configuration arrives with config_changed.
+        elif event == "mini_update_status":
+            self.mini_updates[data.get("uid", "")] = data
+            self._notify()
         elif event == "update_status":
             release = self.update_status.get("installed")
             self.update_status = data
@@ -235,6 +242,9 @@ class NetroniHub:
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("state refresh failed: %s", err)
         old, self.config = self.config, config
+        for mini in config.get("minis", []):
+            if mini.get("firmware_update"):
+                self.mini_updates[mini["uid"]] = {"uid": mini["uid"], **mini["firmware_update"]}
         self.master = config.get("master") or self.master
         self._apply_renames(old)
         if changed:
