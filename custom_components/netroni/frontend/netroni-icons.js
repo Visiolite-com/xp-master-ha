@@ -129,3 +129,19 @@ window.customIcons.netroni = {
   getIcon: async (name) => ICONS[name],
   getIconList: async () => Object.keys(ICONS).map((name) => ({ name })),
 };
+
+// Loaded late (on a page that was open before the integration was installed, through the panel's
+// own import): icons from this set drawn before it existed stay blank. Draw them again; ha-icon
+// keeps itself in its "legacy" mode once a set was missing, and only an mdi icon clears that.
+const redraw = (root) => {
+  for (const el of root.querySelectorAll("*")) {
+    if (el.localName === "ha-icon" && el.icon?.startsWith("netroni:")) {
+      const icon = el.icon;
+      el._legacy = false;
+      el.icon = "";
+      requestAnimationFrame(() => (el.icon = icon));
+    }
+    if (el.shadowRoot) redraw(el.shadowRoot);
+  }
+};
+redraw(document);
