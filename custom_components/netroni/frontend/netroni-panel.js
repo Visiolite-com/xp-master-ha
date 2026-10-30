@@ -36,6 +36,16 @@ const CCT_PRESETS = [
 ];
 const cctLabel = ([warm, cool]) => `${warm}–${cool} K`;
 
+// Closed cards on the Installation tab, remembered in this browser only ("master:<id>", "mini:<id>/<uid>").
+const COLLAPSED_KEY = "netroni-collapsed";
+const loadCollapsed = () => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]"));
+  } catch (_err) {
+    return new Set();
+  }
+};
+
 const portOf = (light) => Number(/^port(\d+)/.exec(light.key)?.[1]);
 const tagOf = (light) => light.key.replace(/^port/, "").toUpperCase(); // "3A", "3T"
 
@@ -56,7 +66,8 @@ class NetroniPanel extends HTMLElement {
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
     this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
     this._busy = false;
-    this._focusMini = new URLSearchParams(location.search).get("mini"); // from a device page's "Configure"
+    this._collapsed = loadCollapsed();
+    this._focusMini =new URLSearchParams(location.search).get("mini"); // from a device page's "Configure"
     this._stateSig = "";
     this._ticks = 0;
     this.attachShadow({ mode: "open" });
@@ -193,6 +204,8 @@ class NetroniPanel extends HTMLElement {
     const key = `${msg.entry_id}|${msg.uid}|${msg.port}`;
     this._identified.set(key, { lightIds: msg.light_ids || [], until: Date.now() + HIGHLIGHT_MS });
     this._tab = "installation";
+    const identifiedMaster = this._master(msg.entry_id);
+    if (identifiedMaster) this._openCards(identifiedMaster, msg.uid); // the port must be visible
     this._stopDmxPoll();
     this._renderMain();
     requestAnimationFrame(() =>
@@ -226,6 +239,15 @@ class NetroniPanel extends HTMLElement {
       case "device":
         history.pushState(null, "", `/config/devices/device/${d.device}`);
         window.dispatchEvent(new CustomEvent("location-changed"));
+        break;
+      case "collapse":
+        this._setCollapsed([d.key], !this._collapsed.has(d.key));
+        break;
+      case "collapse-all":
+        this._setCollapsed(this._data.masters.map((m) => this._masterKey(m)), true);
+        break;
+      case "expand-all":
+        this._setCollapsed([...this._collapsed], false);
         break;
       case "more-info":
         if (d.entity) this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.entity }, bubbles: true, composed: true }));
@@ -824,6 +846,56 @@ class NetroniPanel extends HTMLElement {
     return master?.minis.find((m) => m.uid === uid)?.name || uid;
   }
 
+  // --- closed cards (Installation tab) ------------------------------------------------------
+
+  _masterKey(master) {
+    return `master:${master.master_id}`;
+  }
+
+  _miniKey(master, uid) {
+    return `mini:${master.master_id}/${uid}`;
+  }
+
+  _setCollapsed(keys, closed) {
+    for (const key of keys) {
+      if (closed) this._collapsed.add(key);
+      else this._collapsed.delete(key);
+    }
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...this._collapsed]));
+    } catch (_err) {
+      // private window or storage blocked: closed until the page is reloaded
+    }
+    this._renderMain();
+  }
+
+  /** Open an XP-Mini's card and its XP-Master's (without drawing: the caller does). */
+  _openCards(master, uid) {
+    const keys = [this._masterKey(master), this._miniKey(master, uid)].filter((k) => this._collapsed.has(k));
+    if (!keys.length) return;
+    for (const key of keys) this._collapsed.delete(key);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...this._collapsed]));
+    } catch (_err) {}
+  }
+
+  _chevron(key, label) {
+    const open = !this._collapsed.has(key);
+    return `<button class="icon-btn small chevron" data-action="collapse" data-key="${esc(key)}" aria-expanded="${open}"
+      title="${open ? "Hide" : "Show"} ${label}"><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>`;
+  }
+
+  /** On a closed XP-Mini card, instead of its ports: "8 lights · 2 on". */
+  _miniSummary(master, mini) {
+    const lights = master.lights.filter((l) => l.mini_uid === mini.uid);
+    const states = lights.map((l) => this._hass.states[l.entity_id]?.state);
+    const on = states.filter((s) => s === "on").length;
+    let text = `${lights.length} ${lights.length === 1 ? "light" : "lights"}`;
+    if (!mini.online || states.every((s) => !s || s === "unavailable")) text += " · unavailable";
+    else text += on ? ` · <b>${on} on</b>` : " · all off";
+    return `<div class="summary sub">${text}</div>`;
+  }
+
   // --- rendering ----------------------------------------------------------------------------
 
   _renderMain() {
@@ -876,7 +948,14 @@ class NetroniPanel extends HTMLElement {
     if (this._tab === "remote") return this._localMasters().map((m) => this._remoteCard(m)).join("");
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
     if (this._tab === "dmx") return this._data.masters.map((m) => this._dmxCard(m)).join("");
-    return this._data.masters.map((m) => this._installation(m)).join("");
+    const minis = this._data.masters.reduce((n, m) => n + m.minis.length, 0);
+    const bar = minis
+      ? `<div class="fold-bar">
+          <button class="btn secondary small" data-action="collapse-all" title="Show only the XP-Masters">Collapse all</button>
+          <button class="btn secondary small" data-action="expand-all" ${this._collapsed.size ? "" : "disabled"}>Expand all</button>
+        </div>`
+      : "";
+    return bar + this._data.masters.map((m) => this._installation(m)).join("");
   }
 
   _banner(kind, icon, html, action = "") {
@@ -894,11 +973,19 @@ class NetroniPanel extends HTMLElement {
   _installation(master) {
     const tw = master.minis.reduce((n, m) => n + m.pairs.length, 0);
     const offline = master.minis.filter((m) => !m.online).length;
+    // Coming from an XP-Mini's device page: that one is shown, whatever was closed.
+    if (this._focusMini && master.minis.some((m) => m.uid === this._focusMini)) this._openCards(master, this._focusMini);
+    const key = this._masterKey(master);
+    const closed = this._collapsed.has(key);
+    const hidden = closed && master.minis.length
+      ? `<button class="summary link" data-action="collapse" data-key="${esc(key)}">${master.minis.length} ${master.minis.length === 1 ? "XP-Mini" : "XP-Minis"} hidden · show</button>`
+      : "";
     const head = `
       <section class="card">
         <div class="card-head">
+          ${this._chevron(key, "its XP-Minis")}
           <ha-icon class="head-icon" icon="netroni:logo"></ha-icon>
-          <div class="grow">
+          <div class="grow fold" data-action="collapse" data-key="${esc(key)}">
             <h2>${esc(master.name)}</h2>
             <div class="sub">${esc(master.product || "XP-Master")} · ${esc(master.master_id)}${master.area ? ` · ${esc(master.area)}` : ""}</div>
           </div>
@@ -912,8 +999,9 @@ class NetroniPanel extends HTMLElement {
           ${this._fact("Tunable-white ports", tw)}
           ${this._fact("Firmware", this._firmware(master))}
         </div>
+        ${hidden}
       </section>`;
-    return head + master.minis.map((mini) => this._miniCard(master, mini)).join("");
+    return closed ? head : head + master.minis.map((mini) => this._miniCard(master, mini)).join("");
   }
 
   /** An XP-Mini's firmware, as the XP-Master's: an update available, or how it is going. */
@@ -966,11 +1054,14 @@ class NetroniPanel extends HTMLElement {
     const gear = this._admin
       ? `<button class="icon-btn" data-action="mini-actions" ${data} title="Restart, factory reset, replace or remove"><ha-icon icon="mdi:cog-outline"></ha-icon></button>`
       : "";
+    const key = this._miniKey(master, mini.uid);
+    const closed = this._collapsed.has(key);
     return `
       <section class="card mini ${mini.online ? "" : "offline"} ${this._focused === mini.uid ? "focused" : ""}" id="mini-${esc(mini.uid)}">
         <div class="card-head">
+          ${this._chevron(key, "its ports")}
           <ha-icon class="head-icon mini-icon" icon="netroni:xp-mini"></ha-icon>
-          <div class="grow">
+          <div class="grow fold" data-action="collapse" data-key="${esc(key)}">
             <h3>${esc(mini.name)}</h3>
             <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.hardware_uid && mini.hardware_uid !== mini.uid ? ` (unit ${esc(mini.hardware_uid)})` : ""}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
           </div>
@@ -984,7 +1075,7 @@ class NetroniPanel extends HTMLElement {
           ${this._fact("Tunable-white ports", mini.pairs.length ? mini.pairs.map((p) => `${p}T`).join(", ") : "none")}
         </div>
         ${offline}
-        <div class="ports">${ports}</div>
+        ${closed ? this._miniSummary(master, mini) : `<div class="ports">${ports}</div>`}
       </section>`;
   }
 
@@ -1566,6 +1657,14 @@ const STYLE = `
   .menu-item.danger-text, .menu-item.danger-text > ha-icon { color: var(--bad); }
   .menu-item .sub { display: block; font-weight: 400; }
   .card.mini.focused { box-shadow: 0 0 0 2px var(--primary-color); }
+  .chevron { margin: 0 -8px 0 -8px; }
+  .fold { cursor: pointer; user-select: none; }
+  .summary { margin-top: 12px; }
+  .summary b { color: var(--primary-text-color); font-weight: 500; }
+  .summary.link { display: block; font: inherit; font-size: 13px; color: var(--primary-color); background: none; border: 0; padding: 0; cursor: pointer; }
+  .summary.link:hover { text-decoration: underline; }
+  .fold-bar { display: flex; justify-content: flex-end; gap: 4px; margin: -8px 0 8px; }
+  .btn.small { padding: 6px 12px; font-size: 13px; }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
   .master-block + .master-block { margin-top: 40px; }
