@@ -23,20 +23,10 @@ from . import NetroniConfigEntry
 from .client import CommandError, NetroniError
 from .const import DOMAIN
 from .entity import NetroniEntity, async_track
+from .firmware import MINI_NOTE, MINI_OVER_DATA2, _version, mini_release
 from .hub import NetroniHub
 
 BRIDGE_NOTE = "This update includes the bridge firmware: the lights don't respond for a few seconds while it is installed."
-MINI_OVER_DATA2 = (0, 13, 0)  # the first XP-Mini firmware that takes an update over Data 2
-MINI_NOTE = "The XP-Mini restarts at the end: its lights go off for about a second."
-
-
-def _version(text: str | None) -> tuple[int, ...]:
-    try:
-        return tuple(int(part) for part in (text or "").split("-")[0].split("."))
-    except ValueError:
-        return ()
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NetroniConfigEntry,
@@ -149,7 +139,7 @@ class XpMiniUpdate(NetroniEntity, UpdateEntity):
 
     @property
     def _release(self) -> dict:
-        return ((self.hub.update_status.get("xp_mini") or {}).get("latest")) or {}
+        return mini_release(self.hub)
 
     @property
     def _update(self) -> dict:

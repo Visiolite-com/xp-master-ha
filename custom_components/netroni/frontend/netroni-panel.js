@@ -916,6 +916,21 @@ class NetroniPanel extends HTMLElement {
     return head + master.minis.map((mini) => this._miniCard(master, mini)).join("");
   }
 
+  /** An XP-Mini's firmware, as the XP-Master's: an update available, or how it is going. */
+  _miniFirmware(mini) {
+    const firmware = esc(mini.firmware || "—");
+    let extra = "";
+    if (mini.update_state === "receiving") extra = `updating… ${mini.update_progress || 0} %`;
+    else if (mini.update_state === "restarting") extra = "restarting…";
+    else if (mini.update_state === "failed" && mini.update_available) extra = "update failed";
+    else if (mini.update_available) extra = `${esc(mini.update_available)} available`;
+    if (!extra) return firmware;
+    const label = mini.firmware_entity
+      ? `<a class="fact-link" data-action="more-info" data-entity="${esc(mini.firmware_entity)}">${extra}</a>`
+      : extra;
+    return `${firmware} · ${label}`;
+  }
+
   _firmware(master) {
     const release = master.release ? esc(master.release) : "—";
     let extra = "";
@@ -965,7 +980,7 @@ class NetroniPanel extends HTMLElement {
         </div>
         <div class="facts">
           ${this._fact("DMX", `${mini.dmx_start}–${mini.dmx_start + 31}`)}
-          ${this._fact("Firmware", esc(mini.firmware || "—"))}
+          ${this._fact("Firmware", this._miniFirmware(mini))}
           ${this._fact("Tunable-white ports", mini.pairs.length ? mini.pairs.map((p) => `${p}T`).join(", ") : "none")}
         </div>
         ${offline}

@@ -25,6 +25,7 @@ from .const import CONF_TOKEN, DOMAIN, PORTS_PER_MINI, SIGNAL_HUBS_CHANGED
 from .hub import ALL_MINIS, NetroniHub
 from .sync import async_apply_group_area
 from .matter import async_open_window, format_manual_code, qr_placeholders
+from .firmware import mini_update_available
 
 UPDATE_DELAY = 0.3  # s: coalesce bursts (a pairing change touches many entities) into one update
 
@@ -97,6 +98,11 @@ def _overview(hass: HomeAssistant) -> dict:
                     "online": mini.get("online", True),
                     "dmx_start": mini["dmx_start"],
                     "firmware": mini.get("firmware"),
+                    # its firmware update (the Firmware update entity has the details)
+                    "update_available": mini_update_available(hub, mini),
+                    "update_state": (hub.mini_updates.get(mini["uid"]) or {}).get("state"),
+                    "update_progress": (hub.mini_updates.get(mini["uid"]) or {}).get("progress"),
+                    "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.master_id}_{mini['uid']}/firmware"),
                     "pairs": mini.get("pairs", []),
                     "hardware_uid": mini.get("hardware_uid") or mini["uid"],
                     "replace_candidate": bool(mini.get("replace_candidate")),
