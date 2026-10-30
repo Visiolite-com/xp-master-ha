@@ -24,10 +24,15 @@ Everything works on your own network, without a cloud service.
 
 ## Install
 
-1. In HACS, open the menu (⋮) → *Custom repositories*, add
+[![Open your Home Assistant and show this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Visiolite-com&repository=xp-master-ha&category=integration)
+
+1. Click the button above, or in HACS open the menu (⋮) → *Custom repositories*, add
    `https://github.com/Visiolite-com/xp-master-ha` and choose the type *Integration*.
 2. Search HACS for **Visiolite Netroni XP-Master**, download it and restart Home Assistant.
-3. Go to Settings → Devices & services:
+3. Add the integration with this button, or under Settings → Devices & services:
+
+   [![Open your Home Assistant and add the Netroni XP-Master integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=netroni)
+
    - **Home Assistant on the XP-Master itself:** the XP-Master is found automatically. Confirm it.
    - **Home Assistant on another computer:** in the XP-Master's own Home Assistant, open the
      Netroni panel → *Remote Access* → *Pair a Home Assistant*. Then, in this Home Assistant, add
