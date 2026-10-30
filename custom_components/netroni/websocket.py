@@ -434,7 +434,7 @@ async def ws_restart_mini(hass: HomeAssistant, connection: websocket_api.ActiveC
 )
 @websocket_api.async_response
 async def ws_set_dmx_start(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Move an XP-Mini to another whole DMX block (checked by the XP-Master or Bridge Stick)."""
+    """Move an XP-Mini to another whole DMX block (checked by the XP-Master or XP-Bridge)."""
     await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/set_dmx_start", uid=msg["uid"], start=msg["start"])
 
 

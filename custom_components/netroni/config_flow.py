@@ -224,7 +224,7 @@ class NetroniOptionsFlow(OptionsFlow):
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
         options = ["tunable_white", "matter", "restart", "replace", "factory_reset", "updates"]
-        if self._hub.kind == "stick":  # a Bridge Stick has no Matter bridge and no updates (yet)
+        if self._hub.kind == "stick":  # an XP-Bridge has no Matter bridge and no updates (yet)
             options = [o for o in options if o not in ("matter", "updates")]
         return self.async_show_menu(step_id="init", menu_options=options, description_placeholders={"product": self._hub.product})
 

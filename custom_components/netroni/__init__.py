@@ -101,7 +101,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
         model=hub.product,
         name=hub.master.get("name", hub.product),
         serial_number=hub.master_id,
-        sw_version=hub.update_status.get("installed"),  # the XP-Master (or Bridge Stick) release
+        sw_version=hub.update_status.get("installed"),  # the XP-Master (or XP-Bridge) release
         configuration_url=f"homeassistant://{PANEL_URL_PATH}",
     )
     hub.master_device_id = master_device.id
