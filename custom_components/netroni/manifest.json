@@ -14,7 +14,7 @@
   "requirements": [
     "segno==1.6.6"
   ],
-  "version": "0.24.4",
+  "version": "0.24.5",
   "zeroconf": [
     "_netroni._tcp.local."
   ]

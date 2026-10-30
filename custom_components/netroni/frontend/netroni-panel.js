@@ -14,7 +14,10 @@ const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays hig
 const MATTER_POLL_S = 10;
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
-const DMX_BLOCK = 32; // every XP-Mini owns 32 slots: 16 outputs, 2 slots each at 16-bit
+const DMX_ROW = 32; // channels per line of the DMX monitor
+// An XP-Mini's DMX block: 16 channels at 8-bit (one per output), 32 at 16-bit (coarse, fine).
+const dmxSize = (resolution) => (resolution === 16 ? 32 : 16);
+const dmxRange = (start, resolution) => `${start}–${start + dmxSize(resolution) - 1}`;
 
 const APP_ICONS = {
   SmartThings: "mdi:hub-outline",
@@ -75,6 +78,11 @@ class NetroniPanel extends HTMLElement {
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
     this.shadowRoot.addEventListener("input", (ev) => {
+      if (ev.target.id === "dmx-start" && this._dialog?.kind === "dmx") {
+        this._dialog.start = Number(ev.target.value);
+        this._showDmxCheck();
+        return;
+      }
       if (ev.target.id !== "cct-warm" && ev.target.id !== "cct-cool") return;
       const { warm, cool } = this._cctInputs();
       Object.assign(this._dialog, { warm, cool, custom: true });
@@ -281,11 +289,14 @@ class NetroniPanel extends HTMLElement {
         this._closeDialog();
         this._restartMini(d.entry, d.uid);
         break;
-      case "dmx":
-        this._openDialog({ kind: "dmx", entry: d.entry, uid: d.uid });
+      case "dmx": {
+        const mini = this._mini(d.entry, d.uid);
+        this._openDialog({ kind: "dmx", entry: d.entry, uid: d.uid, start: mini?.dmx_start, resolution: mini?.dmx_resolution || 8 });
+        break;
+      }
         break;
       case "confirm-dmx":
-        this._setDmxStart();
+        this._setDmx();
         break;
       case "reset":
         this._openDialog({ kind: "reset", entry: d.entry, uid: d.uid });
@@ -368,6 +379,10 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (el.name === "dmx-res" && this._dialog?.kind === "dmx") {
+      this._pickDmxResolution(Number(el.value));
+      return;
+    }
     if (el.dataset?.action === "dim") {
       const brightness = Math.max(1, Math.min(255, Number(el.value)));
       this._hass
@@ -525,15 +540,59 @@ class NetroniPanel extends HTMLElement {
     });
   }
 
-  async _setDmxStart() {
-    const { entry, uid } = this._dialog;
-    const start = Number(this.shadowRoot.getElementById("dmx-start")?.value);
+  /** The DMX dialog's start and resolution: {ok, changed, text} for the line under the field. */
+  _dmxCheck() {
+    const { entry, uid, start, resolution } = this._dialog;
+    const master = this._master(entry);
     const mini = this._mini(entry, uid);
-    if (!start || start === mini?.dmx_start) return;
+    const last = 513 - dmxSize(resolution);
+    if (!Number.isInteger(start) || start < 1 || start > last) {
+      return { ok: false, text: `The start must be 1–${last} at ${resolution}-bit.` };
+    }
+    const end = start + dmxSize(resolution);
+    const other = (master?.minis || []).find(
+      (m) => m.uid !== uid && m.dmx_start && start < m.dmx_start + dmxSize(m.dmx_resolution) && m.dmx_start < end
+    );
+    if (other) {
+      return { ok: false, text: `Channels ${dmxRange(start, resolution)} overlap ${esc(other.name)} (${dmxRange(other.dmx_start, other.dmx_resolution)}).` };
+    }
+    const changed = start !== mini?.dmx_start || resolution !== (mini?.dmx_resolution || 8);
+    return { ok: true, changed, text: changed ? `Channels ${dmxRange(start, resolution)}: free.` : "Its current channels." };
+  }
+
+  _showDmxCheck() {
+    const check = this._dmxCheck();
+    const line = this.shadowRoot.getElementById("dmx-check");
+    if (line) {
+      line.innerHTML = check.text;
+      line.classList.toggle("bad-text", !check.ok);
+    }
+    const save = this.shadowRoot.getElementById("dmx-save");
+    if (save) save.disabled = this._busy || !check.ok || !check.changed;
+  }
+
+  /** Another resolution: keep the start where the block still fits, else the XP-Master's suggestion. */
+  async _pickDmxResolution(resolution) {
+    const d = this._dialog;
+    d.resolution = resolution;
+    try {
+      const suggestion = await this._hass.callWS({ type: "netroni/suggest_dmx", entry_id: d.entry, uid: d.uid, resolution });
+      if (this._dialog !== d) return;
+      if (suggestion.start == null) d.full = true;
+      else if (suggestion.moves || this._dmxCheck().ok === false) d.start = suggestion.start;
+    } catch {
+      // an XP-Master without suggest_dmx: the check line says what doesn't fit
+    }
+    this._renderDialog();
+  }
+
+  async _setDmx() {
+    const { entry, uid, start, resolution } = this._dialog;
+    if (!this._dmxCheck().changed) return;
     const name = this._miniName(this._master(entry), uid);
     await this._run(async () => {
-      await this._call({ type: "netroni/set_dmx_start", entry_id: entry, uid, start });
-      this._toast(`${name} now uses DMX ${start}–${start + DMX_BLOCK - 1}`);
+      await this._call({ type: "netroni/set_dmx", entry_id: entry, uid, start, resolution });
+      this._toast(`${name} now uses DMX ${dmxRange(start, resolution)} at ${resolution}-bit`);
     });
   }
 
@@ -708,7 +767,7 @@ class NetroniPanel extends HTMLElement {
     return JSON.stringify(
       (this._data?.masters || []).map((m) => {
         const snap = this._dmx[m.entry_id] || {};
-        return [m.entry_id, snap.output, snap.error, snap.resolution, snap.fixed, (snap.blocks || []).map((b) => [b.dmx_start, b.name])];
+        return [m.entry_id, snap.output, snap.error, snap.fixed, (snap.blocks || []).map((b) => [b.dmx_start, b.dmx_resolution, b.name])];
       })
     );
   }
@@ -727,12 +786,11 @@ class NetroniPanel extends HTMLElement {
   /** Who sets a slot: a fixed value, an XP-Mini output (and the light on it), or nobody. */
   _slotOwner(master, snap, addr) {
     if (snap.fixed?.[addr] != null) return "Fixed value (--dmx-fixed)";
-    const block = (snap.blocks || []).find((b) => addr >= b.dmx_start && addr < b.dmx_start + DMX_BLOCK);
+    const block = (snap.blocks || []).find((b) => addr >= b.dmx_start && addr < b.dmx_start + dmxSize(b.dmx_resolution));
     if (!block) return "Not used";
     const offset = addr - block.dmx_start;
-    const bits16 = snap.resolution === 16;
+    const bits16 = block.dmx_resolution === 16;
     const output = bits16 ? offset >> 1 : offset;
-    if (output >= DMX_BLOCK / 2) return `${esc(block.name)} block · not used at 8-bit`;
     const port = (output >> 1) + 1;
     const side = output % 2 ? "B" : "A";
     const lights = master.lights.filter((l) => l.mini_uid === block.uid);
@@ -779,7 +837,6 @@ class NetroniPanel extends HTMLElement {
     const fixed = Object.entries(snap.fixed || {}).map(([a, v]) => `${a} = ${v}`).join(", ");
     return `${this._chip(!snap.errors, "Sending", "Frames failing")}
       ${this._fact("Port", esc(snap.device))}
-      ${this._fact("Resolution", `${snap.resolution}-bit`)}
       ${this._fact("Rate", rate)}
       ${this._fact("Fixed", fixed || "none")}`;
   }
@@ -799,15 +856,18 @@ class NetroniPanel extends HTMLElement {
       </div>`;
     if (!snap) return `<section class="card">${head}<div class="empty small">Loading…</div></section>`;
     if (!snap.output) {
-      const why = snap.error ? esc(snap.error) : "This XP-Master doesn't send DMX itself.";
+      const why = snap.error ? esc(snap.error) : `This ${esc(master.product || "XP-Master")} doesn't send DMX itself.`;
       return `<section class="card">${head}<div class="sub pad">${why}</div></section>`;
     }
     const entry = master.entry_id;
-    const starts = new Map((snap.blocks || []).map((b) => [b.dmx_start, b]));
+    // Each line of 32 channels: its first channel, and the XP-Minis whose blocks start on it.
     let labels = "";
-    for (let start = 1; start <= DMX_SLOTS; start += DMX_BLOCK) {
-      const block = starts.get(start);
-      labels += `<div class="dmx-label">${start}${block ? ` <span>${esc(block.name)}</span>` : ""}</div>`;
+    for (let row = 1; row <= DMX_SLOTS; row += DMX_ROW) {
+      const names = (snap.blocks || [])
+        .filter((b) => b.dmx_start >= row && b.dmx_start < row + DMX_ROW)
+        .sort((a, b) => a.dmx_start - b.dmx_start)
+        .map((b) => (b.dmx_start === row ? esc(b.name) : `${b.dmx_start} ${esc(b.name)}`));
+      labels += `<div class="dmx-label" title="${names.join(" · ")}">${row}${names.length ? ` <span>${names.join(" · ")}</span>` : ""}</div>`;
     }
     let cells = "";
     for (let addr = 1; addr <= DMX_SLOTS; addr++) {
@@ -1070,7 +1130,7 @@ class NetroniPanel extends HTMLElement {
           ${mini.device_id ? this._deviceLink(mini.device_id) : ""}
         </div>
         <div class="facts">
-          ${this._fact("DMX", `${mini.dmx_start}–${mini.dmx_start + 31}`)}
+          ${this._fact("DMX", `${dmxRange(mini.dmx_start, mini.dmx_resolution || 8)} · ${mini.dmx_resolution || 8}-bit`)}
           ${this._fact("Firmware", this._miniFirmware(mini))}
           ${this._fact("Tunable-white ports", mini.pairs.length ? mini.pairs.map((p) => `${p}T`).join(", ") : "none")}
         </div>
@@ -1452,30 +1512,29 @@ class NetroniPanel extends HTMLElement {
       title = esc(mini?.name || d.uid);
       body = `<div class="menu">
         ${item("restart", "mdi:restart", "Restart", "Keeps all its settings; back within a few seconds.", mini?.online)}
-        ${item("dmx", "mdi:tune-vertical", "DMX block…", mini?.online ? `Channels ${mini.dmx_start}–${mini.dmx_start + DMX_BLOCK - 1}; change it to use another range on a DMX console.` : "Only when it is online.", mini?.online)}
+        ${item("dmx", "mdi:tune-vertical", "DMX…", mini?.online ? `Channels ${dmxRange(mini.dmx_start, mini.dmx_resolution || 8)} at ${mini.dmx_resolution || 8}-bit; change them, or 8 or 16-bit, for a DMX console.` : "Only when it is online.", mini?.online)}
         ${item("reset", "mdi:backup-restore", "Factory reset…", "Forgets everything; found again as a new XP-Mini.", mini?.online, true)}
         ${item("replace", "mdi:swap-horizontal", "Replace…", mini?.online ? "Only when it is offline: a new XP-Mini takes its place." : "A new XP-Mini takes its place.", !mini?.online && spares)}
         ${item("remove", "mdi:delete-outline", "Remove…", mini?.online ? "Only when it is offline (disconnected for good)." : "Forget it: lights, names and DMX block.", !mini?.online, true)}
       </div>`;
     } else if (d.kind === "dmx") {
-      const master = this._master(d.entry);
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
-      const others = (master?.minis || []).filter((m) => m.uid !== d.uid);
-      const range = (s) => `${s}–${s + DMX_BLOCK - 1}`;
-      const blocks = [];
-      for (let s = 1; s + DMX_BLOCK - 1 <= DMX_SLOTS; s += DMX_BLOCK) {
-        if (s === mini?.dmx_start || !others.some((m) => Math.abs(s - m.dmx_start) < DMX_BLOCK)) blocks.push(s);
-      }
-      if (mini && !blocks.includes(mini.dmx_start)) blocks.unshift(mini.dmx_start); // a start of its own (not a whole block)
-      title = `DMX block of ${name}`;
-      body = `<p>${name} listens to DMX channels ${mini ? range(mini.dmx_start) : "?"}. Pick another free block of ${DMX_BLOCK} channels:</p>
-        <label class="field"><span>DMX channels</span>
-          <select id="dmx-start">${blocks
-            .map((s) => `<option value="${s}" ${s === mini?.dmx_start ? "selected" : ""}>${range(s)}${s === mini?.dmx_start ? " (current)" : ""}</option>`)
-            .join("")}</select></label>
-        <p class="sub">A DMX console patched to ${mini ? range(mini.dmx_start) : "the old channels"} no longer controls it. Its lights, names and groups stay as they are.</p>`;
-      action = `<button class="btn" data-action="confirm-dmx" ${this._busy ? "disabled" : ""}>Move</button>`;
+      const now = mini?.dmx_resolution || 8;
+      const option = (resolution, text) => `
+        <label class="choice"><input type="radio" name="dmx-res" value="${resolution}" ${d.resolution === resolution ? "checked" : ""}>
+          <span><b>${resolution}-bit</b><span class="sub">${text}</span></span></label>`;
+      const check = this._dmxCheck();
+      title = `DMX of ${name}`;
+      body = `<p>${name} listens to DMX channels ${mini ? dmxRange(mini.dmx_start, now) : "?"} at ${now}-bit.</p>
+        <div class="field"><span>Resolution</span>
+          ${option(8, "16 channels, one per output: Port 1A, 1B, 2A …")}
+          ${option(16, "32 channels, two per output (coarse, fine), for a 16-bit console")}</div>
+        <label class="field"><span>Start channel</span>
+          <input id="dmx-start" type="number" inputmode="numeric" min="1" max="${513 - dmxSize(d.resolution)}" value="${d.start ?? ""}"></label>
+        <div id="dmx-check" class="sub dmx-check ${check.ok ? "" : "bad-text"}">${d.full ? "No room for a block this size: DMX is full." : check.text}</div>
+        <p class="sub">A DMX console patched to the old channels no longer controls it. Its lights, names and groups stay as they are.</p>`;
+      action = `<button class="btn" id="dmx-save" data-action="confirm-dmx" ${this._busy || !check.ok || !check.changed ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "reset") {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
@@ -1657,6 +1716,11 @@ const STYLE = `
   .menu-item.danger-text, .menu-item.danger-text > ha-icon { color: var(--bad); }
   .menu-item .sub { display: block; font-weight: 400; }
   .card.mini.focused { box-shadow: 0 0 0 2px var(--primary-color); }
+  .choice { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; cursor: pointer; }
+  .field .choice input { width: auto; margin: 3px 0 0; padding: 0; flex: none; accent-color: var(--primary-color); }
+  .choice .sub { display: block; }
+  .dmx-check { margin-top: 6px; min-height: 1.4em; }
+  .bad-text { color: var(--bad); }
   .chevron { margin: 0 -8px 0 -8px; }
   .fold { cursor: pointer; user-select: none; }
   .summary { margin-top: 12px; }

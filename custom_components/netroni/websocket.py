@@ -42,7 +42,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_update_light,
         ws_remove_mini,
         ws_restart_mini,
-        ws_set_dmx_start,
+        ws_set_dmx,
+        ws_suggest_dmx,
         ws_factory_reset_mini,
         ws_replace_mini,
         ws_dmx_snapshot,
@@ -97,6 +98,7 @@ def _overview(hass: HomeAssistant) -> dict:
                     "name": device.name_by_user or device.name if device else mini["name"],
                     "online": mini.get("online", True),
                     "dmx_start": mini["dmx_start"],
+                    "dmx_resolution": mini.get("dmx_resolution", 8),
                     "firmware": mini.get("firmware"),
                     # its firmware update (the Firmware update entity has the details)
                     "update_available": mini_update_available(hub, mini),
@@ -426,16 +428,35 @@ async def ws_restart_mini(hass: HomeAssistant, connection: websocket_api.ActiveC
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "netroni/set_dmx_start",
+        vol.Required("type"): "netroni/set_dmx",
         vol.Required("entry_id"): str,
         vol.Required("uid"): str,
-        vol.Required("start"): vol.All(int, vol.Range(min=1, max=512)),
+        vol.Optional("start"): vol.All(int, vol.Range(min=1, max=512)),
+        vol.Optional("resolution"): vol.In([8, 16]),
     }
 )
 @websocket_api.async_response
-async def ws_set_dmx_start(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Move an XP-Mini to another whole DMX block (checked by the XP-Master or XP-Bridge)."""
-    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/set_dmx_start", uid=msg["uid"], start=msg["start"])
+async def ws_set_dmx(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Move an XP-Mini's DMX block and/or set it to 8 or 16-bit (checked by the XP-Master or XP-Bridge:
+    the block must fit and overlap no other)."""
+    args = {k: msg[k] for k in ("start", "resolution") if k in msg}
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/set_dmx", uid=msg["uid"], **args)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/suggest_dmx",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("resolution"): vol.In([8, 16]),
+    }
+)
+@websocket_api.async_response
+async def ws_suggest_dmx(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Where an XP-Mini's block goes at a resolution: {start, resolution, slots, moves}."""
+    await _mini_command(connection, msg, _hub(hass, msg["entry_id"]), "mini/suggest_dmx", uid=msg["uid"],
+                        resolution=msg["resolution"])
 
 
 @websocket_api.require_admin
