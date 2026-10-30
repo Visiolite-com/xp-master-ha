@@ -113,9 +113,9 @@ class XpMasterUpdate(UpdateEntity):
         try:
             await self.hub.client.call("update/install", **({"release": version} if version else {}))
         except CommandError as err:
-            raise HomeAssistantError(f"The XP-Master cannot install this update: {str(err).split(': ', 1)[-1]}") from err
+            raise HomeAssistantError(f"The {self.hub.product} cannot install this update: {str(err).split(': ', 1)[-1]}") from err
         except NetroniError as err:
-            raise HomeAssistantError(f"Cannot reach the XP-Master: {err}") from err
+            raise HomeAssistantError(f"Cannot reach the {self.hub.product}: {err}") from err
 
     async def async_update(self) -> None:
         """Settings → Updates → Check for updates (homeassistant.update_entity): ask the server now."""
@@ -151,8 +151,10 @@ class XpMiniUpdate(NetroniEntity, UpdateEntity):
 
     @property
     def _newer(self) -> bool:
+        """A newer release: not for a simulated XP-Mini, whose firmware isn't a version ("sim-0.4")."""
         release = self._release.get("release")
-        return bool(release and _version(release) > _version(self.installed_version))
+        installed = _version(self.installed_version)
+        return bool(release and installed and _version(release) > installed)
 
     @property
     def _over_data2(self) -> bool:
@@ -205,4 +207,4 @@ class XpMiniUpdate(NetroniEntity, UpdateEntity):
         except CommandError as err:
             raise HomeAssistantError(f"Cannot update this XP-Mini: {str(err).split(': ', 1)[-1]}") from err
         except NetroniError as err:
-            raise HomeAssistantError(f"Cannot reach the XP-Master: {err}") from err
+            raise HomeAssistantError(f"Cannot reach the {self.hub.product}: {err}") from err
