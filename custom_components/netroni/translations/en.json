@@ -3,8 +3,8 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Add an XP-Master",
-        "description": "The address of the XP-Master (its name, e.g. xpm-e177.local, or its IP address). For an XP-Master other than the one this Home Assistant runs on, open a pairing window first: in that XP-Master's Netroni panel, Remote Access → Pair a Home Assistant or app.",
+        "title": "Add an XP-Master or XP-Bridge",
+        "description": "The address of the XP-Master or XP-Bridge (its name, e.g. xpm-e177.local, or its IP address).\n\nFor an XP-Master other than the one this Home Assistant runs on, open a pairing window first: in that XP-Master's Netroni panel, Remote Access → Pair a Home Assistant or app. An XP-Bridge needs nothing beforehand: you press its button in the next step.",
         "data": {
           "host": "Host"
         }
@@ -19,6 +19,14 @@
         "data": {
           "code": "Pairing code"
         }
+      },
+      "button_not_pressed": {
+        "title": "Pair with {name}",
+        "description": "The button on {name} wasn't pressed in time, or another app paired with that press.\n\nSelect **Submit** to try again, then press the button briefly (less than 2 seconds)."
+      },
+      "button_cannot_connect": {
+        "title": "Pair with {name}",
+        "description": "Could not reach {name}. Check that it is powered and on the network, then select **Submit** to try again."
       }
     },
     "error": {
@@ -26,12 +34,15 @@
       "invalid_code": "Wrong code, or the pairing window has closed. Open a new one in the XP-Master's Netroni panel."
     },
     "abort": {
-      "already_configured": "This XP-Master is already configured.",
+      "already_configured": "This XP-Master or XP-Bridge is already configured.",
       "not_netroni": "The discovered device is not an XP-Master.",
       "not_local": "This XP-Master's software has no remote access yet: update it first.",
       "restore_pending": "This XP-Master is already set up under its earlier id: see Settings → Repairs to restore its settings.",
       "reauth_successful": "Paired again.",
       "wrong_master": "That is another XP-Master than this one."
+    },
+    "progress": {
+      "press_button": "Press the button on {name} briefly (less than 2 seconds). Its light blinks twice a second while it pairs.\n\nThis page continues by itself once it is paired."
     }
   },
   "options": {

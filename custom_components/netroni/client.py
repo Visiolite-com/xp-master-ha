@@ -17,6 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 
 WS_PATH = "/api/ws"
 CALL_TIMEOUT = 10
+BUTTON_TIMEOUT = 100  # s pairing by the button may take: the XP-Bridge waits 90 s for the press
 
 
 def _pinned(fingerprint: str) -> aiohttp.Fingerprint:
@@ -43,12 +44,23 @@ def client_for_entry(hass, data: dict, **kwargs) -> NetroniClient:
 async def async_fetch_fingerprint(hass, host: str, port: int) -> str:
     """The certificate an XP-Master's remote access shows, as hex (trust on first use: the person
     pairing compares its start with the XP-Master's display). Raises CannotConnect."""
+    return (await async_fetch_certificate(hass, host, port))[0]
+
+
+async def async_fetch_certificate(hass, host: str, port: int) -> tuple[str, str]:
+    """(fingerprint as hex, the id in its name): "Netroni XPM-…" for an XP-Master, "Netroni XPS-…"
+    for an XP-Bridge, which pairs by its button instead of a code. Raises CannotConnect."""
     import hashlib
     import ssl
 
-    def fetch() -> str:
-        pem = ssl.get_server_certificate((host, port), timeout=CALL_TIMEOUT)
-        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    def fetch() -> tuple[str, str]:
+        der = ssl.PEM_cert_to_DER_cert(ssl.get_server_certificate((host, port), timeout=CALL_TIMEOUT))
+        names = x509.load_der_x509_certificate(der).subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        name = str(names[0].value) if names else ""
+        return hashlib.sha256(der).hexdigest(), name.removeprefix("Netroni ").strip()
 
     try:
         return await hass.async_add_executor_job(fetch)
@@ -56,15 +68,22 @@ async def async_fetch_fingerprint(hass, host: str, port: int) -> str:
         raise CannotConnect(f"no remote access on {host}:{port}: {err}") from err
 
 
-async def async_pair(session: aiohttp.ClientSession, host: str, port: int, fingerprint: str, name: str, code: str) -> dict:
-    """Pair with an XP-Master's remote access: {"token", "client_id", "master_id"}. Raises
-    CommandError("pair_invalid") for a wrong code or no open window, CannotConnect otherwise."""
+async def async_pair(
+    session: aiohttp.ClientSession, host: str, port: int, fingerprint: str, name: str, code: str | None = None
+) -> dict:
+    """Pair with an XP-Master's remote access: {"token", "client_id", "master_id"}. Without a code:
+    pairing by an XP-Bridge's button; this waits for the press (the XP-Bridge first answers
+    "pair_waiting"). Raises CommandError("pair_invalid") for a wrong code, no open window or no
+    press in time, CannotConnect otherwise."""
     url = f"wss://{host}:{port}{WS_PATH}"
+    request = {"type": "pair", "name": name, **({"code": code} if code is not None else {"button": True})}
     try:
-        async with asyncio.timeout(CALL_TIMEOUT):
+        async with asyncio.timeout(CALL_TIMEOUT if code is not None else BUTTON_TIMEOUT):
             async with session.ws_connect(url, ssl=_pinned(fingerprint)) as ws:
-                await ws.send_json({"type": "pair", "name": name, "code": code})
+                await ws.send_json(request)
                 msg = await ws.receive()
+                while msg.type is aiohttp.WSMsgType.TEXT and json.loads(msg.data).get("type") == "pair_waiting":
+                    msg = await ws.receive()
     except aiohttp.ServerFingerprintMismatch as err:
         raise CannotConnect(f"{url} has another certificate") from err
     except (aiohttp.ClientError, TimeoutError, OSError) as err:
