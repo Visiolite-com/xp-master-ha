@@ -54,8 +54,49 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_remote_open_pairing,
         ws_remote_close_pairing,
         ws_remote_revoke,
+        ws_scene_capture,
+        ws_scene_delete,
     ):
         websocket_api.async_register_command(hass, command)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/scene_capture",
+        vol.Required("entry_id"): str,
+        vol.Optional("scene_id"): str,  # absent: a new scene
+        vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
+        vol.Required("members"): [str],  # light and group ids: as they are now
+        vol.Optional("fade", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+    }
+)
+@websocket_api.async_response
+async def ws_scene_capture(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """A scene of these lights and groups as they are now (Capture), new or over an existing one."""
+    hub = _hub(hass, msg["entry_id"])
+    fields = {k: msg[k] for k in ("name", "members", "fade", "scene_id") if k in msg}
+    try:
+        result = await hub.client.call("scene/capture", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/scene_delete", vol.Required("entry_id"): str, vol.Required("scene_id"): str}
+)
+@websocket_api.async_response
+async def ws_scene_delete(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    hub = _hub(hass, msg["entry_id"])
+    try:
+        await hub.client.call("scene/delete", scene_id=msg["scene_id"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
 
 
 def _hubs(hass: HomeAssistant) -> list[NetroniHub]:

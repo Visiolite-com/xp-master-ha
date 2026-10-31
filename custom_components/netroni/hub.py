@@ -170,6 +170,7 @@ class NetroniHub:
         ids = {prefix + light["id"] for light in self.config.get("lights", [])}
         ids.add(f"{self.master_id}_firmware")
         ids.update(f"{prefix}group/{group['id']}" for group in self.config.get("groups", []))
+        ids.update(f"{prefix}scene/{scene['id']}" for scene in self.config.get("scenes", []))
         for mini in self.config.get("minis", []):
             ids.update(
                 f"{prefix}{mini['uid']}/{port}/identify" for port in range(1, PORTS_PER_MINI + 1)
@@ -418,9 +419,10 @@ class NetroniHub:
 
 
 def _structure(config: dict) -> tuple:
-    """What decides which entities exist: the XP-Minis and the lights their ports produce."""
+    """What decides which entities exist: the XP-Minis, the lights their ports produce, groups, scenes."""
     return (
         tuple(sorted(m["uid"] for m in config.get("minis", []))),
         tuple(sorted(l["id"] for l in config.get("lights", []))),
         tuple(sorted(g["id"] for g in config.get("groups", []))),
+        tuple(sorted(sc["id"] for sc in config.get("scenes", []))),
     )

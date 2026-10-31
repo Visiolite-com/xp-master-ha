@@ -35,7 +35,7 @@ from .panel import PANEL_URL_PATH, async_setup_panel
 from .sync import async_setup_label_sync
 from .websocket import async_setup_websocket
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT, Platform.UPDATE]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.EVENT, Platform.LIGHT, Platform.SCENE, Platform.UPDATE]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
