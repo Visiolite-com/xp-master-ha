@@ -56,6 +56,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_remote_revoke,
         ws_scene_capture,
         ws_scene_save,
+        ws_set_transitions,
         ws_scene_delete,
     ):
         websocket_api.async_register_command(hass, command)
@@ -69,7 +70,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         vol.Optional("scene_id"): str,  # absent: a new scene
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
         vol.Required("members"): [str],  # light and group ids: as they are now
-        vol.Optional("transition", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+        # seconds, decimals allowed; absent or None: each port's default transition
+        vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
     }
 )
 @websocket_api.async_response
@@ -83,6 +85,30 @@ async def ws_scene_capture(hass: HomeAssistant, connection: websocket_api.Active
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/set_transitions",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("port"): vol.All(int, vol.Range(min=1, max=8)),
+        vol.Optional("up"): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),  # seconds, decimals allowed
+        vol.Optional("down"): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+    }
+)
+@websocket_api.async_response
+async def ws_set_transitions(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """A port's default transitions: used when a command (a light, a group, a scene) gives none."""
+    hub = _hub(hass, msg["entry_id"])
+    fields = {k: msg[k] for k in ("up", "down") if k in msg}
+    try:
+        await hub.client.call("mini/set_transitions", uid=msg["uid"], port=msg["port"], **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
 
 
 _ENTRY = vol.Schema(
@@ -103,7 +129,8 @@ _ENTRY = vol.Schema(
         vol.Required("entry_id"): str,
         vol.Optional("scene_id"): str,  # absent: a new scene
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
-        vol.Optional("transition", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+        # seconds, decimals allowed; absent or None: each port's default transition
+        vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
         vol.Required("entries"): [_ENTRY],  # each a light or a group, with what it is set to
     }
 )
@@ -111,7 +138,7 @@ _ENTRY = vol.Schema(
 async def ws_scene_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """Create a scene from its entries, or change one (name, transition, entries)."""
     hub = _hub(hass, msg["entry_id"])
-    fields = {"name": msg["name"], "transition": msg["transition"], "entries": msg["entries"]}
+    fields = {k: msg[k] for k in ("name", "transition", "entries") if k in msg}
     try:
         if "scene_id" in msg:
             await hub.client.call("scene/update", scene_id=msg["scene_id"], **fields)
@@ -182,6 +209,8 @@ def _overview(hass: HomeAssistant) -> dict:
                     "dmx_resolution": mini.get("dmx_resolution", 8),
                     # what its description says it takes; empty: not known (an older XP-Master)
                     "settings_offered": mini.get("settings_offered") or {},
+                    # default transitions per port, ms: {"3": [up, down]}; ports not listed: 0
+                    "transitions": mini.get("transitions") or {},
                     "firmware": mini.get("firmware"),
                     # its firmware update (the Firmware update entity has the details)
                     "update_available": mini_update_available(hub, mini),
