@@ -124,10 +124,15 @@ class NetroniHub:
             return {}
 
     async def _group_states(self) -> dict:
+        """The groups' states. Only a Netroni service from before groups has none; any other error is
+        raised, so the connection is tried again: taken as "no groups", every group light would stay
+        unavailable until its next change (seen once after an XP-Bridge restart)."""
         try:
             return await self.client.call("group/get_state")
-        except CommandError:  # a Netroni service from before groups
-            return {}
+        except CommandError as err:
+            if err.code == "unknown_command":
+                return {}
+            raise
 
     # --- lookups -----------------------------------------------------------
 
