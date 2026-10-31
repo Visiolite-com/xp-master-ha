@@ -1424,9 +1424,9 @@ class NetroniPanel extends HTMLElement {
         const item = e.group ? master.groups.find((g) => g.id === e.group) : master.lights.find((l) => l.id === e.light);
         const name = e.group ? `${item?.name || e.group}` : item ? item.name || item.default_name : e.light;
         const sub = e.group ? "Group" : item ? `${this._miniName(master, item.mini_uid)} · ${item.key.replace("port", "").toUpperCase()}` : "";
-        const what = e.on ? `On · ${pct(e.brightness ?? 255)}${e.kelvin ? ` · ${e.kelvin} K` : ""}` : "Off";
+        const what = e.on ? `On · <b>${pct(e.brightness ?? 255)}</b>${e.kelvin ? ` · ${e.kelvin} K` : ""}` : "Off";
         return `<div class="scene-entry"><ha-icon icon="${e.group ? "mdi:lightbulb-group-outline" : "mdi:lightbulb-outline"}"></ha-icon>
-          <div class="grow"><div class="light-name">${esc(name)}</div><div class="light-sub">${esc(sub)}</div></div>
+          <div class="gr-name"><div class="light-name">${esc(name)}</div><div class="light-sub">${esc(sub)}</div></div>
           <div class="gr-pct">${what}</div></div>`;
       })
       .join("");
@@ -1684,10 +1684,11 @@ class NetroniPanel extends HTMLElement {
           <input id="scene-name" type="text" value="${esc(d.name)}" placeholder="Evening" ${lock}></label>
         <div class="field"><span>Transition</span>
           <label class="choice"><input type="radio" name="scene-tr" value="ports" ${fixed ? "" : "checked"} ${lock}>
-            <span><b>Each port's own</b><span class="sub">Every light changes at its port's default transition; a port with none: at once.</span></span></label>
+            <span><b>Each port's own</b><span class="sub">Every light at its port's default (none set: at once).</span></span></label>
           <label class="choice"><input type="radio" name="scene-tr" value="fixed" ${fixed ? "checked" : ""} ${lock}>
-            <span><b>The same for every light</b><span class="sub">
-              <input id="scene-seconds" type="number" min="0" max="600" step="0.1" value="${fixed ? d.transition : 2}" ${fixed && !this._busy ? "" : "disabled"}> seconds (0: at once)</span></span></label>
+            <span><b>The same for every light</b>
+              <span class="sub seconds"><input id="scene-seconds" type="number" min="0" max="600" step="0.1" value="${fixed ? d.transition : 2}"
+                ${fixed && !this._busy ? "" : "disabled"}>seconds (0: at once)</span></span></label>
         </div>
         <div class="members-block"><div class="members-label">What it sets</div><div class="members scene-members">
           ${groups ? `<div class="member-mini">Groups</div>${groups}` : ""}${lights}</div></div>
@@ -1885,19 +1886,23 @@ const STYLE = `
   .light-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .light-name.unnamed { color: var(--secondary-text-color); font-style: italic; }
   .light-sub { font-size: 12px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .scene-entries { padding: 0 16px 10px; }
-  .scene-entry { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
-  .scene-entry ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
-  .scene-card .card-head .btn { margin-left: 6px; }
-  .scene-row { border-top: 1px solid var(--line); padding: 2px 0; }
-  .scene-row:first-child { border-top: 0; }
-  .scene-set { display: flex; align-items: center; gap: 10px; padding: 0 0 6px 26px; flex-wrap: wrap; }
-  .scene-set .slider { flex: 1; min-width: 120px; }
-  .scene-set .tw { margin-top: 0; }
-  .scene-pct { width: 44px; text-align: right; font-size: 13px; color: var(--secondary-text-color); }
-  .scene-k input { width: 72px; }
+  .scene-entries { margin-top: 10px; }
+  .scene-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0;
+    border-top: 1px solid var(--line); }
+  .scene-entry ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); justify-self: center; }
+  .scene-row { border-top: 1px solid var(--line); }
+  .scene-row:first-child, .member-mini + .scene-row { border-top: 0; }
+  .scene-row .member { padding: 6px 0; }
+  .scene-set { display: flex; align-items: center; gap: 12px; padding: 0 0 8px 21px; }
+  .scene-set .slider { flex: 1; min-width: 0; }
+  .scene-set .tw { margin-top: 0; flex: none; }
+  .scene-pct { flex: none; width: 40px; text-align: right; font-size: 13px; color: var(--secondary-text-color); }
+  .scene-k { flex: none; display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }
+  .scene-k input { width: 64px; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--input-fill-color, var(--secondary-background-color)); color: var(--primary-text-color); }
   .scene-members { max-height: 380px; }
-  #scene-seconds { width: 80px; }
+  .field .choice .seconds { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 13px; }
+  .field .choice .seconds input { width: 72px; padding: 6px 8px; flex: none; margin: 0; }
   .actions.left { justify-content: flex-start; }
   .tw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; cursor: pointer; user-select: none; }
   .tw.readonly { cursor: default; }
