@@ -1531,9 +1531,14 @@ class NetroniPanel extends HTMLElement {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
       const now = mini?.dmx_resolution || 8;
-      const option = (resolution, text) => `
-        <label class="choice"><input type="radio" name="dmx-res" value="${resolution}" ${d.resolution === resolution ? "checked" : ""}>
-          <span><b>${resolution}-bit</b><span class="sub">${text}</span></span></label>`;
+      // The resolutions it takes, by its description; all while that isn't known (older XP-Master).
+      const takes = mini?.settings_offered?.dmx_resolutions;
+      const option = (resolution, text) => {
+        const off = takes && !takes.includes(resolution);
+        return `
+        <label class="choice"><input type="radio" name="dmx-res" value="${resolution}" ${d.resolution === resolution ? "checked" : ""} ${off ? "disabled" : ""}>
+          <span><b>${resolution}-bit</b><span class="sub">${off ? "Needs newer XP-Mini firmware" : text}</span></span></label>`;
+      };
       const check = this._dmxCheck();
       title = `DMX of ${name}`;
       body = `<p>${name} listens to DMX channels ${mini ? dmxRange(mini.dmx_start, now) : "?"} at ${now}-bit.</p>

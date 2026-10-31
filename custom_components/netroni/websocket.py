@@ -99,6 +99,8 @@ def _overview(hass: HomeAssistant) -> dict:
                     "online": mini.get("online", True),
                     "dmx_start": mini["dmx_start"],
                     "dmx_resolution": mini.get("dmx_resolution", 8),
+                    # what its description says it takes; empty: not known (an older XP-Master)
+                    "settings_offered": mini.get("settings_offered") or {},
                     "firmware": mini.get("firmware"),
                     # its firmware update (the Firmware update entity has the details)
                     "update_available": mini_update_available(hub, mini),
