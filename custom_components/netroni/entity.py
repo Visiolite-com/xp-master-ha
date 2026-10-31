@@ -22,7 +22,7 @@ class NetroniEntity(Entity):
     def __init__(self, hub: NetroniHub, mini_uid: str, key: str) -> None:
         self.hub = hub
         self.mini_uid = mini_uid
-        self._attr_unique_id = f"{hub.master_id}_{key}"
+        self._attr_unique_id = f"{hub.entity_prefix}_{key}"
         mini = hub.mini(mini_uid) or {}
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, mini_uid)},

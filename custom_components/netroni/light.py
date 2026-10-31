@@ -53,7 +53,7 @@ class NetroniGroupLight(LightEntity):
     def __init__(self, hub: NetroniHub, group: dict) -> None:
         self.hub = hub
         self.group_id = group["id"]
-        self._attr_unique_id = f"{hub.master_id}_group/{group['id']}"
+        self._attr_unique_id = f"{hub.entity_prefix}_group/{group['id']}"
 
     @property
     def name(self) -> str:

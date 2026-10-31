@@ -38,7 +38,7 @@ def async_notify_port_identified(hass: HomeAssistant, hub: NetroniHub, data: dic
     entity_ids: set[str] = set()
     for light_id in data.get("light_ids", []):
         light = hub.light(light_id) or {}
-        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_{light_id}")
+        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.entity_prefix}_{light_id}")
         if entity_id is None:
             continue
         entity_ids.add(entity_id)

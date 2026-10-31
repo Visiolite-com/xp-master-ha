@@ -48,6 +48,14 @@ class NetroniHub:
         return self.master["id"]
 
     @property
+    def entity_prefix(self) -> str:
+        """What the XP-Minis', lights' and groups' unique ids start with: the installation (visiolink
+        docs/ids.md), so they stay the same when the XP-Master or XP-Bridge is replaced; an older
+        XP-Master without one: its id."""
+        installation = self.config.get("installation") or ""
+        return installation if installation.strip("0") else self.master_id
+
+    @property
     def product(self) -> str:
         """What it is, in texts: "XP-Master" or "XP-Bridge"."""
         return "XP-Bridge" if self.kind == "stick" else "XP-Master"
@@ -85,6 +93,7 @@ class NetroniHub:
         self.mini_updates = {m["uid"]: {"uid": m["uid"], **m["firmware_update"]}
                              for m in config.get("minis", []) if m.get("firmware_update")}
         self.kind = hello.get("kind") or "master"
+        self.async_migrate_unique_ids()
         self._apply_renames(old)
         self.group_states = group_states
         self.update_status = update_status
@@ -151,9 +160,9 @@ class NetroniHub:
 
     def expected_unique_ids(self) -> set[str]:
         """Unique ids of every entity the current configuration should have."""
-        prefix = f"{self.master_id}_"
+        prefix = f"{self.entity_prefix}_"
         ids = {prefix + light["id"] for light in self.config.get("lights", [])}
-        ids.add(f"{prefix}firmware")
+        ids.add(f"{self.master_id}_firmware")
         ids.update(f"{prefix}group/{group['id']}" for group in self.config.get("groups", []))
         for mini in self.config.get("minis", []):
             ids.update(
@@ -242,6 +251,7 @@ class NetroniHub:
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("state refresh failed: %s", err)
         old, self.config = self.config, config
+        self.async_migrate_unique_ids()
         for mini in config.get("minis", []):
             if mini.get("firmware_update"):
                 self.mini_updates[mini["uid"]] = {"uid": mini["uid"], **mini["firmware_update"]}
@@ -360,6 +370,25 @@ class NetroniHub:
                 translation_placeholders={"name": mini["name"], "uid": uid},
                 data={"entry_id": self.entry.entry_id, "uid": uid},
             )
+
+    @callback
+    def async_migrate_unique_ids(self) -> None:
+        """Entities of this entry still on the XP-Master's id ("XPM-E177_<light>"), once it has an
+        installation: onto the installation's ("<installation>_<light>"), keeping their entity ids,
+        names and areas, so automations go on working."""
+        prefix = self.entity_prefix
+        if prefix == self.master_id:
+            return
+        ent_reg = er.async_get(self.hass)
+        old_prefix = f"{self.master_id}_"
+        for reg_entry in er.async_entries_for_config_entry(ent_reg, self.entry.entry_id):
+            rest = reg_entry.unique_id.removeprefix(old_prefix)
+            if rest == reg_entry.unique_id or rest == "firmware":
+                continue
+            new = f"{prefix}_{rest}"
+            if ent_reg.async_get_entity_id(reg_entry.domain, DOMAIN, new) is None:
+                ent_reg.async_update_entity(reg_entry.entity_id, new_unique_id=new)
+                _LOGGER.debug("%s: unique id %s -> %s", reg_entry.entity_id, reg_entry.unique_id, new)
 
     @callback
     def async_remove_stale(self) -> None:

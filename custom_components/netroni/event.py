@@ -56,7 +56,7 @@ class PortIdentifiedEvent(NetroniEntity, EventEntity):
         entity_ids = [
             entity_id
             for light_id in data.get("light_ids", [])
-            if (entity_id := ent_reg.async_get_entity_id("light", DOMAIN, f"{self.hub.master_id}_{light_id}"))
+            if (entity_id := ent_reg.async_get_entity_id("light", DOMAIN, f"{self.hub.entity_prefix}_{light_id}"))
         ]
         self._trigger_event(
             EVENT_PORT_IDENTIFIED,

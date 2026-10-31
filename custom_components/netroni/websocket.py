@@ -106,7 +106,7 @@ def _overview(hass: HomeAssistant) -> dict:
                     "update_available": mini_update_available(hub, mini),
                     "update_state": (hub.mini_updates.get(mini["uid"]) or {}).get("state"),
                     "update_progress": (hub.mini_updates.get(mini["uid"]) or {}).get("progress"),
-                    "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.master_id}_{mini['uid']}/firmware"),
+                    "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.entity_prefix}_{mini['uid']}/firmware"),
                     "pairs": mini.get("pairs", []),
                     "hardware_uid": mini.get("hardware_uid") or mini["uid"],
                     "replace_candidate": bool(mini.get("replace_candidate")),
@@ -116,7 +116,7 @@ def _overview(hass: HomeAssistant) -> dict:
             )
         lights = []
         for light in hub.config.get("lights", []):
-            entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_{light['id']}")
+            entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.entity_prefix}_{light['id']}")
             entry = ent_reg.async_get(entity_id) if entity_id else None
             device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
             area_id = (entry.area_id if entry else None) or (device.area_id if device else None)
@@ -140,7 +140,7 @@ def _overview(hass: HomeAssistant) -> dict:
             )
         groups = []
         for group in hub.config.get("groups", []):
-            entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{group['id']}")
+            entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.entity_prefix}_group/{group['id']}")
             entry = ent_reg.async_get(entity_id) if entity_id else None
             groups.append(
                 {
@@ -304,7 +304,7 @@ async def ws_group_save(hass: HomeAssistant, connection: websocket_api.ActiveCon
         _error(connection, msg["id"], err)
         return
     # The entity of an existing group moves now; a new one gets the area when it appears.
-    entity_id = er.async_get(hass).async_get_entity_id("light", DOMAIN, f"{hub.master_id}_group/{result['group_id']}")
+    entity_id = er.async_get(hass).async_get_entity_id("light", DOMAIN, f"{hub.entity_prefix}_group/{result['group_id']}")
     if entity_id:
         async_apply_group_area(hass, entity_id, area_name)
     connection.send_result(msg["id"], result)

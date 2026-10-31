@@ -54,7 +54,7 @@ def async_update_hidden(hass: HomeAssistant, hub: NetroniHub) -> None:
         if group.get("hide_members", True)
         for member in group.get("members", [])
     }
-    prefix = f"{hub.master_id}_"
+    prefix = f"{hub.entity_prefix}_"
     for light in hub.config.get("lights", []):
         entity_id = ent_reg.async_get_entity_id("light", DOMAIN, prefix + light["id"])
         entry = ent_reg.async_get(entity_id) if entity_id else None
@@ -81,7 +81,7 @@ def async_apply_group_area(hass: HomeAssistant, entity_id: str, area_name: str |
 async def async_push_group_area(hass: HomeAssistant, hub: NetroniHub, entity_id: str) -> None:
     """The user moved a group's entity to another area in Home Assistant: store it on the XP-Master."""
     reg_entry = er.async_get(hass).async_get(entity_id)
-    prefix = f"{hub.master_id}_group/"
+    prefix = f"{hub.entity_prefix}_group/"
     if reg_entry is None or not reg_entry.unique_id.startswith(prefix):
         return
     group_id = reg_entry.unique_id.removeprefix(prefix)
@@ -99,7 +99,7 @@ async def async_push_group_area(hass: HomeAssistant, hub: NetroniHub, entity_id:
 async def async_push_label(hass: HomeAssistant, hub: NetroniHub, entity_id: str) -> None:
     """Store a light's HA name and area on the Master if they differ from what it has."""
     reg_entry = er.async_get(hass).async_get(entity_id)
-    prefix = f"{hub.master_id}_"
+    prefix = f"{hub.entity_prefix}_"
     if reg_entry is None or not reg_entry.unique_id.startswith(prefix):
         return
     light_id = reg_entry.unique_id.removeprefix(prefix)
@@ -153,7 +153,7 @@ def async_apply_renames(hass: HomeAssistant, hub: NetroniHub, old: dict, new: di
         name = light.get("name") or ""
         if not name or light["id"] not in old_lights or name == old_lights[light["id"]]:
             continue
-        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.master_id}_{light['id']}")
+        entity_id = ent_reg.async_get_entity_id("light", DOMAIN, f"{hub.entity_prefix}_{light['id']}")
         entry = ent_reg.async_get(entity_id) if entity_id else None
         if entry is not None and entry.name != name:
             ent_reg.async_update_entity(entity_id, name=name)
@@ -199,7 +199,7 @@ def async_setup_label_sync(
         if data["action"] != "update" or not ({"name", "area_id"} & set(data["changes"])):
             return
         reg_entry = ent_reg.async_get(data["entity_id"])
-        if reg_entry and reg_entry.unique_id.startswith(f"{hub.master_id}_group/"):
+        if reg_entry and reg_entry.unique_id.startswith(f"{hub.entity_prefix}_group/"):
             if "area_id" in data["changes"]:
                 entry.async_create_background_task(
                     hass, async_push_group_area(hass, hub, data["entity_id"]), "netroni push group area"
