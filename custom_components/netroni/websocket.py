@@ -263,6 +263,17 @@ def _overview(hass: HomeAssistant) -> dict:
                     "area": area_name(entry.area_id) if entry else group.get("area"),
                 }
             )
+        scenes = [
+            {
+                "id": scene["id"],
+                "name": scene["name"],
+                # ms; None: each port's default transition
+                "transition": scene.get("transition"),
+                "entries": [{k: v for k, v in e.items() if v is not None} for e in scene.get("entries", [])],
+                "entity_id": ent_reg.async_get_entity_id("scene", DOMAIN, f"{hub.entity_prefix}_scene/{scene['id']}"),
+            }
+            for scene in hub.config.get("scenes", [])
+        ]
         master_device = dev_reg.async_get(hub.master_device_id) if hub.master_device_id else None
         masters.append(
             {
@@ -289,6 +300,9 @@ def _overview(hass: HomeAssistant) -> dict:
                 "minis": minis,
                 "lights": lights,
                 "groups": groups,
+                "scenes": scenes,
+                # an XP-Master or XP-Bridge from before scenes has none in its configuration
+                "scenes_supported": "scenes" in hub.config,
             }
         )
     return {"masters": masters}

@@ -78,6 +78,15 @@ class NetroniPanel extends HTMLElement {
     this.shadowRoot.addEventListener("click", (ev) => this._onClick(ev));
     this.shadowRoot.addEventListener("change", (ev) => this._onChange(ev));
     this.shadowRoot.addEventListener("input", (ev) => {
+      if (this._dialog?.kind === "scene") {
+        if (ev.target.id === "scene-name") this._dialog.name = ev.target.value;
+        if (ev.target.id === "scene-seconds") this._dialog.transition = Number(ev.target.value);
+        if (ev.target.dataset?.action === "scene-brightness") {
+          const pct = this.shadowRoot.querySelector(`[data-pct="${CSS.escape(ev.target.dataset.key)}"]`);
+          if (pct) pct.textContent = `${Math.round((Number(ev.target.value) / 255) * 100)} %`;
+        }
+        return;
+      }
       if (ev.target.id === "dmx-start" && this._dialog?.kind === "dmx") {
         this._dialog.start = Number(ev.target.value);
         this._showDmxCheck();
@@ -345,6 +354,36 @@ class NetroniPanel extends HTMLElement {
       case "delete-group":
         this._deleteGroup();
         break;
+      case "new-scene":
+        this._openDialog({ kind: "scene", entry: d.entry, sceneId: null, name: "", transition: null, entries: {} });
+        break;
+      case "edit-scene": {
+        const scene = this._master(d.entry)?.scenes.find((s) => s.id === d.scene);
+        if (scene) {
+          const entries = {};
+          for (const e of scene.entries) entries[e.group ? `group:${e.group}` : `light:${e.light}`] = { ...e };
+          this._openDialog({ kind: "scene", entry: d.entry, sceneId: scene.id, name: scene.name,
+            transition: scene.transition == null ? null : scene.transition / 1000, entries });
+        }
+        break;
+      }
+      case "recall-scene":
+        this._hass
+          .callService("scene", "turn_on", { entity_id: d.entity })
+          .catch((err) => this._toast(err.message || String(err)));
+        break;
+      case "scene-now": {
+        const master = this._master(this._dialog.entry);
+        for (const key of Object.keys(this._dialog.entries)) this._dialog.entries[key] = this._sceneEntryNow(master, key);
+        this._renderDialog();
+        break;
+      }
+      case "save-scene":
+        this._saveScene();
+        break;
+      case "delete-scene":
+        this._deleteScene();
+        break;
       case "save-cct":
         this._saveCct();
         break;
@@ -382,6 +421,35 @@ class NetroniPanel extends HTMLElement {
     if (el.name === "dmx-res" && this._dialog?.kind === "dmx") {
       this._pickDmxResolution(Number(el.value));
       return;
+    }
+    if (this._dialog?.kind === "scene") {
+      const d = this._dialog;
+      const key = el.dataset?.key;
+      if (el.dataset?.action === "scene-member") {
+        if (el.checked) d.entries[key] = this._sceneEntryNow(this._master(d.entry), key);
+        else delete d.entries[key];
+        this._renderDialog();
+        return;
+      }
+      if (el.dataset?.action === "scene-on" && d.entries[key]) {
+        d.entries[key].on = el.checked;
+        return;
+      }
+      if (el.dataset?.action === "scene-brightness" && d.entries[key]) {
+        d.entries[key].brightness = Math.max(1, Math.min(255, Number(el.value)));
+        d.entries[key].on = true; // setting a brightness means on, as for a light
+        this._renderDialog();
+        return;
+      }
+      if (el.dataset?.action === "scene-kelvin" && d.entries[key]) {
+        d.entries[key].kelvin = Math.round(Number(el.value)) || undefined;
+        return;
+      }
+      if (el.name === "scene-tr") {
+        d.transition = el.value === "fixed" ? Number(this.shadowRoot.getElementById("scene-seconds")?.value) || 2 : null;
+        this._renderDialog();
+        return;
+      }
     }
     if (el.dataset?.action === "dim") {
       const brightness = Math.max(1, Math.min(255, Number(el.value)));
@@ -474,6 +542,45 @@ class NetroniPanel extends HTMLElement {
     const msg = { type: "netroni/group_save", entry_id: d.entry, name, members: d.members, area_id: d.areaId || null, hide_members: d.hideMembers !== false };
     if (d.groupId) msg.group_id = d.groupId;
     await this._run(() => this._call(msg));
+  }
+
+  async _saveScene() {
+    const d = this._dialog;
+    const name = (this.shadowRoot.getElementById("scene-name")?.value || "").trim();
+    if (!name) {
+      this._toast("Give the scene a name");
+      return;
+    }
+    d.name = name;
+    let transition = null;
+    if (d.transition != null) {
+      transition = Number(this.shadowRoot.getElementById("scene-seconds")?.value);
+      if (!(transition >= 0 && transition <= 600)) {
+        this._toast("The transition is 0 to 600 seconds");
+        return;
+      }
+      d.transition = transition;
+    }
+    const entries = Object.values(d.entries).map((e) => {
+      const out = { on: !!e.on, brightness: e.brightness || 255 };
+      if (e.group) out.group = e.group;
+      else out.light = e.light;
+      if (e.kelvin) out.kelvin = e.kelvin;
+      return out;
+    });
+    const msg = { type: "netroni/scene_save", entry_id: d.entry, name, transition, entries };
+    if (d.sceneId) msg.scene_id = d.sceneId;
+    await this._run(() => this._call(msg));
+  }
+
+  async _deleteScene() {
+    const d = this._dialog;
+    if (!d.confirmDelete) {
+      d.confirmDelete = true; // second click deletes
+      this._renderDialog();
+      return;
+    }
+    await this._run(() => this._call({ type: "netroni/scene_delete", entry_id: d.entry, scene_id: d.sceneId }));
   }
 
   /** The area all these lights share (their own or their XP-Mini's), or null. */
@@ -979,6 +1086,7 @@ class NetroniPanel extends HTMLElement {
       <div class="tabs">
         ${this._tabButton("installation", "Installation")}
         ${this._tabButton("groups", "Groups")}
+        ${this._tabButton("scenes", "Scenes")}
         ${this._xpMasters.length ? this._tabButton("matter", "Matter Connections") : ""}
         ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
@@ -1015,6 +1123,7 @@ class NetroniPanel extends HTMLElement {
     if (this._tab === "matter") return this._xpMasters.map((m) => this._matterCard(m)).join("");
     if (this._tab === "remote") return this._localMasters().map((m) => this._remoteCard(m)).join("");
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
+    if (this._tab === "scenes") return this._data.masters.map((m) => this._scenesCard(m)).join("");
     if (this._tab === "dmx") return this._xpMasters.map((m) => this._dmxCard(m)).join("");
     const minis = this._data.masters.reduce((n, m) => n + m.minis.length, 0);
     const bar = minis
@@ -1281,6 +1390,75 @@ class NetroniPanel extends HTMLElement {
       </section>`;
   }
 
+  _scenesCard(master) {
+    const scenes = master.scenes || [];
+    const title = this._data.masters.length > 1 ? `<h2 class="master-title">${esc(master.name)}</h2>` : "";
+    if (!master.scenes_supported) {
+      return `<div class="master-block">${title}<section class="card"><div class="card-head"><ha-icon class="head-icon" icon="mdi:palette-outline"></ha-icon>
+        <div class="grow"><h2>Scenes</h2><div class="sub">${esc(master.name)} · Its software has no scenes yet: update it under Settings → Updates.</div></div></div></section></div>`;
+    }
+    const intro = scenes.length
+      ? ""
+      : `<section class="card"><div class="card-head"><ha-icon class="head-icon" icon="mdi:palette-outline"></ha-icon>
+          <div class="grow"><h2>Scenes</h2><div class="sub">${esc(master.name)} · Lights and groups set together with one tap, on every XP-Mini at once, also without Home Assistant.</div></div></div>
+          <div class="sub pad">No scenes yet.</div></section>`;
+    const add = this._admin
+      ? `<div class="actions"><button class="btn" data-action="new-scene" data-entry="${master.entry_id}">New scene</button></div>`
+      : "";
+    return `<div class="master-block">${title}${intro}${scenes.map((s) => this._sceneCard(master, s)).join("")}${add}</div>`;
+  }
+
+  /** "3 s", "0.5 s", or the ports' defaults: how a scene's changes go. */
+  _transitionText(ms) {
+    return ms == null ? "each port's transition" : ms === 0 ? "at once" : `transition ${+(ms / 1000).toFixed(3)} s`;
+  }
+
+  _sceneCard(master, scene) {
+    const pct = (v) => `${Math.round((v / 255) * 100)} %`;
+    const lights = scene.entries.filter((e) => e.light).length;
+    const groups = scene.entries.length - lights;
+    const parts = [lights ? `${lights} light${lights === 1 ? "" : "s"}` : "", groups ? `${groups} group${groups === 1 ? "" : "s"}` : ""]
+      .filter(Boolean).join(", ") || "empty";
+    const rows = scene.entries
+      .map((e) => {
+        const item = e.group ? master.groups.find((g) => g.id === e.group) : master.lights.find((l) => l.id === e.light);
+        const name = e.group ? `${item?.name || e.group}` : item ? item.name || item.default_name : e.light;
+        const sub = e.group ? "Group" : item ? `${this._miniName(master, item.mini_uid)} · ${item.key.replace("port", "").toUpperCase()}` : "";
+        const what = e.on ? `On · ${pct(e.brightness ?? 255)}${e.kelvin ? ` · ${e.kelvin} K` : ""}` : "Off";
+        return `<div class="scene-entry"><ha-icon icon="${e.group ? "mdi:lightbulb-group-outline" : "mdi:lightbulb-outline"}"></ha-icon>
+          <div class="grow"><div class="light-name">${esc(name)}</div><div class="light-sub">${esc(sub)}</div></div>
+          <div class="gr-pct">${what}</div></div>`;
+      })
+      .join("");
+    const edit = this._admin
+      ? `<button class="btn secondary" data-action="edit-scene" data-entry="${master.entry_id}" data-scene="${esc(scene.id)}">Edit</button>`
+      : "";
+    return `
+      <section class="card scene-card">
+        <div class="card-head">
+          <ha-icon class="head-icon" icon="mdi:palette-outline"></ha-icon>
+          <div class="grow"><h3>${esc(scene.name)}</h3>
+            <div class="sub">Scene · ${parts} · ${this._transitionText(scene.transition)}</div></div>
+          <button class="btn" data-action="recall-scene" data-entity="${esc(scene.entity_id || "")}" ${scene.entity_id && master.connected ? "" : "disabled"}>Recall</button>
+          ${edit}
+        </div>
+        ${rows ? `<div class="scene-entries">${rows}</div>` : `<div class="sub pad">Nothing in this scene. ${this._admin ? "Use Edit to add lights or groups." : ""}</div>`}
+      </section>`;
+  }
+
+  /** A scene entry from how the light or group is now (its Home Assistant state). */
+  _sceneEntryNow(master, key) {
+    const [kind, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    const item = kind === "group" ? master.groups.find((g) => g.id === id) : master.lights.find((l) => l.id === id);
+    const st = item ? this._hass.states[item.entity_id] : null;
+    const entry = { [kind]: id, on: st?.state === "on", brightness: Math.max(1, Number(st?.attributes.brightness) || 255) };
+    if (kind === "light" && item?.kind === "tunable_white") {
+      const mid = Math.round(((item.min_kelvin || 2200) + (item.max_kelvin || 5000)) / 2 / 50) * 50;
+      entry.kelvin = Number(st?.attributes.color_temp_kelvin) || mid;
+    }
+    return entry;
+  }
+
   _remoteCard(master) {
     const status = this._remote[master.entry_id];
     let body;
@@ -1473,6 +1651,50 @@ class NetroniPanel extends HTMLElement {
         <p class="sub">A light is in one group at most: to move one here, remove it from its group first. Dimming the group keeps the lights' own levels relative to each other.</p>`;
       action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
         <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
+    } else if (d.kind === "scene") {
+      const master = this._master(d.entry);
+      title = d.sceneId ? `Edit ${esc(d.name || "scene")}` : "New scene";
+      const lock = this._busy ? "disabled" : "";
+      const row = (key, name, sub, light) => {
+        const e = d.entries[key];
+        const set = e
+          ? `<div class="scene-set">
+              <label class="tw"><input type="checkbox" data-action="scene-on" data-key="${esc(key)}" ${e.on ? "checked" : ""} ${lock}><span class="switch"></span>On</label>
+              <input class="slider" type="range" min="1" max="255" value="${e.brightness}" data-action="scene-brightness" data-key="${esc(key)}" ${lock}>
+              <span class="scene-pct" data-pct="${esc(key)}">${Math.round((e.brightness / 255) * 100)} %</span>
+              ${light?.kind === "tunable_white" ? `<label class="scene-k"><input type="number" min="${light.min_kelvin || 1000}" max="${light.max_kelvin || 10000}" step="50"
+                value="${e.kelvin ?? ""}" data-action="scene-kelvin" data-key="${esc(key)}" ${lock}> K</label>` : ""}
+            </div>`
+          : "";
+        return `<div class="scene-row ${e ? "in" : ""}">
+          <label class="member"><input type="checkbox" data-action="scene-member" data-key="${esc(key)}" ${e ? "checked" : ""} ${lock}>
+            <span>${esc(name)}</span><span class="sub">${esc(sub)}</span></label>${set}</div>`;
+      };
+      const groups = (master.groups || []).map((g) => row(`group:${g.id}`, g.name, `Group · ${g.members.length} light${g.members.length === 1 ? "" : "s"}`)).join("");
+      const lights = master.minis
+        .map((mini) => {
+          const items = master.lights.filter((l) => l.mini_uid === mini.uid)
+            .map((l) => row(`light:${l.id}`, l.name || l.default_name, `${mini.name} · ${l.key.replace("port", "").toUpperCase()}`, l)).join("");
+          return items ? `<div class="member-mini">${esc(mini.name)}</div>${items}` : "";
+        })
+        .join("");
+      const fixed = d.transition != null;
+      body = `
+        <label class="field"><span>Name</span>
+          <input id="scene-name" type="text" value="${esc(d.name)}" placeholder="Evening" ${lock}></label>
+        <div class="field"><span>Transition</span>
+          <label class="choice"><input type="radio" name="scene-tr" value="ports" ${fixed ? "" : "checked"} ${lock}>
+            <span><b>Each port's own</b><span class="sub">Every light changes at its port's default transition; a port with none: at once.</span></span></label>
+          <label class="choice"><input type="radio" name="scene-tr" value="fixed" ${fixed ? "checked" : ""} ${lock}>
+            <span><b>The same for every light</b><span class="sub">
+              <input id="scene-seconds" type="number" min="0" max="600" step="0.1" value="${fixed ? d.transition : 2}" ${fixed && !this._busy ? "" : "disabled"}> seconds (0: at once)</span></span></label>
+        </div>
+        <div class="members-block"><div class="members-label">What it sets</div><div class="members scene-members">
+          ${groups ? `<div class="member-mini">Groups</div>${groups}` : ""}${lights}</div></div>
+        <div class="actions left"><button class="btn secondary" data-action="scene-now" ${Object.keys(d.entries).length && !this._busy ? "" : "disabled"}>Set from the lights as they are now</button></div>
+        <p class="sub">Each XP-Mini keeps its part and all of them change at once when the scene is recalled, also without Home Assistant. A light's own setting wins over its group's. A group's brightness is its level: its lights keep their own brightness under it.</p>`;
+      action = `${d.sceneId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-scene" ${lock}>${d.confirmDelete ? "Delete for good" : "Delete scene"}</button>` : ""}
+        <button class="btn" data-action="save-scene" ${lock}>Save</button>`;
     } else if (d.kind === "cct") {
       const mini = this._mini(d.entry, d.uid);
       const light = this._master(d.entry)?.lights.find((l) => l.mini_uid === d.uid && l.key === `port${d.port}t`);
@@ -1663,6 +1885,20 @@ const STYLE = `
   .light-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .light-name.unnamed { color: var(--secondary-text-color); font-style: italic; }
   .light-sub { font-size: 12px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene-entries { padding: 0 16px 10px; }
+  .scene-entry { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .scene-entry ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
+  .scene-card .card-head .btn { margin-left: 6px; }
+  .scene-row { border-top: 1px solid var(--line); padding: 2px 0; }
+  .scene-row:first-child { border-top: 0; }
+  .scene-set { display: flex; align-items: center; gap: 10px; padding: 0 0 6px 26px; flex-wrap: wrap; }
+  .scene-set .slider { flex: 1; min-width: 120px; }
+  .scene-set .tw { margin-top: 0; }
+  .scene-pct { width: 44px; text-align: right; font-size: 13px; color: var(--secondary-text-color); }
+  .scene-k input { width: 72px; }
+  .scene-members { max-height: 380px; }
+  #scene-seconds { width: 80px; }
+  .actions.left { justify-content: flex-start; }
   .tw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; cursor: pointer; user-select: none; }
   .tw.readonly { cursor: default; }
   .tw-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
