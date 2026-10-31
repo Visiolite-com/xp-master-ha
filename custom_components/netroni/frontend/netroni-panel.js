@@ -621,8 +621,13 @@ class NetroniPanel extends HTMLElement {
     }
   }
 
+  /** The XP-Masters, not the XP-Bridges: only an XP-Master has a Matter bridge and sends DMX. */
+  get _xpMasters() {
+    return (this._data?.masters || []).filter((m) => m.product !== "XP-Bridge");
+  }
+
   async _refreshMatter() {
-    for (const master of this._data?.masters || []) {
+    for (const master of this._xpMasters) {
       try {
         const status = await this._hass.callWS({ type: "netroni/matter_status", entry_id: master.entry_id });
         this._setMatter(master.entry_id, status);
@@ -732,7 +737,7 @@ class NetroniPanel extends HTMLElement {
     this._dmxBusy = true;
     const hadTab = this._hasDmx;
     try {
-      for (const master of this._data?.masters || []) {
+      for (const master of this._xpMasters) {
         const prev = this._dmx[master.entry_id];
         let snap;
         try {
@@ -971,7 +976,7 @@ class NetroniPanel extends HTMLElement {
       <div class="tabs">
         ${this._tabButton("installation", "Installation")}
         ${this._tabButton("groups", "Groups")}
-        ${this._tabButton("matter", "Matter Connections")}
+        ${this._xpMasters.length ? this._tabButton("matter", "Matter Connections") : ""}
         ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
@@ -1004,10 +1009,10 @@ class NetroniPanel extends HTMLElement {
     if (!this._data.masters.length) {
       return `<div class="empty">No XP-Master is connected. Add one in Settings → Devices &amp; services.</div>`;
     }
-    if (this._tab === "matter") return this._data.masters.map((m) => this._matterCard(m)).join("");
+    if (this._tab === "matter") return this._xpMasters.map((m) => this._matterCard(m)).join("");
     if (this._tab === "remote") return this._localMasters().map((m) => this._remoteCard(m)).join("");
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
-    if (this._tab === "dmx") return this._data.masters.map((m) => this._dmxCard(m)).join("");
+    if (this._tab === "dmx") return this._xpMasters.map((m) => this._dmxCard(m)).join("");
     const minis = this._data.masters.reduce((n, m) => n + m.minis.length, 0);
     const bar = minis
       ? `<div class="fold-bar">
