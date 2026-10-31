@@ -55,6 +55,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_remote_close_pairing,
         ws_remote_revoke,
         ws_scene_capture,
+        ws_scene_save,
         ws_scene_delete,
     ):
         websocket_api.async_register_command(hass, command)
@@ -68,16 +69,55 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         vol.Optional("scene_id"): str,  # absent: a new scene
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
         vol.Required("members"): [str],  # light and group ids: as they are now
-        vol.Optional("fade", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+        vol.Optional("transition", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
     }
 )
 @websocket_api.async_response
 async def ws_scene_capture(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """A scene of these lights and groups as they are now (Capture), new or over an existing one."""
     hub = _hub(hass, msg["entry_id"])
-    fields = {k: msg[k] for k in ("name", "members", "fade", "scene_id") if k in msg}
+    fields = {k: msg[k] for k in ("name", "members", "transition", "scene_id") if k in msg}
     try:
         result = await hub.client.call("scene/capture", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)
+
+
+_ENTRY = vol.Schema(
+    {
+        vol.Exclusive("light", "member"): str,
+        vol.Exclusive("group", "member"): str,
+        vol.Optional("on", default=True): bool,
+        vol.Optional("brightness", default=255): vol.All(int, vol.Range(min=1, max=255)),
+        vol.Optional("kelvin"): vol.All(int, vol.Range(min=1000, max=10000)),
+    }
+)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/scene_save",
+        vol.Required("entry_id"): str,
+        vol.Optional("scene_id"): str,  # absent: a new scene
+        vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
+        vol.Optional("transition", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=600)),
+        vol.Required("entries"): [_ENTRY],  # each a light or a group, with what it is set to
+    }
+)
+@websocket_api.async_response
+async def ws_scene_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Create a scene from its entries, or change one (name, transition, entries)."""
+    hub = _hub(hass, msg["entry_id"])
+    fields = {"name": msg["name"], "transition": msg["transition"], "entries": msg["entries"]}
+    try:
+        if "scene_id" in msg:
+            await hub.client.call("scene/update", scene_id=msg["scene_id"], **fields)
+            result = {"scene_id": msg["scene_id"]}
+        else:
+            result = await hub.client.call("scene/create", **fields)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

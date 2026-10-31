@@ -1237,7 +1237,7 @@ class NetroniPanel extends HTMLElement {
 
   _groupCard(master, group) {
     const gst = this._hass.states[group.entity_id];
-    const fader = Number(gst?.attributes.brightness ?? 255);
+    const groupLevel = Number(gst?.attributes.brightness ?? 255);
     const on = gst?.state === "on";
     const members = group.members.map((id) => master.lights.find((l) => l.id === id)).filter(Boolean);
     const minis = new Set(members.map((l) => l.mini_uid)).size;
@@ -1248,7 +1248,7 @@ class NetroniPanel extends HTMLElement {
         const unavailable = !st || st.state === "unavailable";
         const lit = st?.state === "on";
         const own = Number(st?.attributes.brightness ?? 0) || 0;
-        const out = lit ? Math.round((own * fader) / 255) : 0;
+        const out = lit ? Math.round((own * groupLevel) / 255) : 0;
         const mini = this._miniName(master, light.mini_uid);
         return `
           <div class="grow-row ${lit ? "on" : ""}">
@@ -1271,11 +1271,11 @@ class NetroniPanel extends HTMLElement {
             <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""} · ${esc(group.area || "No area")}</div></div>
           ${edit}
         </div>
-        <div class="grow-row group-fader ${on ? "on" : ""}">
+        <div class="grow-row group-level ${on ? "on" : ""}">
           <button class="lamp" data-action="toggle" data-entity="${esc(group.entity_id)}" ${gst ? "" : "disabled"}><ha-icon icon="mdi:lightbulb-group-outline"></ha-icon></button>
           <div class="gr-name"><div class="light-name"><b>Group</b></div><div class="light-sub">dims all members together</div></div>
-          <input class="slider" type="range" min="1" max="255" value="${fader}" data-action="dim" data-entity="${esc(group.entity_id)}" ${gst ? "" : "disabled"}>
-          <div class="gr-pct"><b>${on ? pct(fader) : "Off"}</b></div>
+          <input class="slider" type="range" min="1" max="255" value="${groupLevel}" data-action="dim" data-entity="${esc(group.entity_id)}" ${gst ? "" : "disabled"}>
+          <div class="gr-pct"><b>${on ? pct(groupLevel) : "Off"}</b></div>
         </div>
         ${rows || `<div class="sub pad">No lights in this group. ${this._admin ? "Use Edit to add some." : ""}</div>`}
       </section>`;
@@ -1675,7 +1675,7 @@ const STYLE = `
   .field-row .field { flex: 1; }
   .field input:disabled { opacity: .7; }
   .grow-row { display: grid; grid-template-columns: 34px minmax(120px, 200px) 1fr 140px; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-  .grow-row.group-fader { border-top: 0; margin-top: 8px; }
+  .grow-row.group-level { border-top: 0; margin-top: 8px; }
   .grow-row.on .lamp { color: var(--lamp-on); background: rgba(255, 152, 0, .16); }
   .gr-name { min-width: 0; }
   .gr-pct { font-size: 13px; text-align: right; color: var(--secondary-text-color); }

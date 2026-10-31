@@ -6,8 +6,10 @@ from typing import Any
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_TRANSITION,
     ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -39,8 +41,15 @@ async def async_setup_entry(
     )
 
 
+def _with_transition(fields: dict, kwargs: dict) -> dict:
+    """Home Assistant's transition (seconds, decimals allowed), passed on; none: the ports' defaults."""
+    if ATTR_TRANSITION in kwargs:
+        fields["transition"] = round(float(kwargs[ATTR_TRANSITION]), 3)
+    return fields
+
+
 class NetroniGroupLight(LightEntity):
-    """A group: on if any member is on; its brightness is the fader over the members' own levels."""
+    """A group: on if any member is on; its brightness is the group's level, over the members' own brightness."""
 
     # No device: a group can span XP-Minis, and as an entity of its own it has exactly the area
     # chosen for it (on the XP-Master device it would take that device's area).
@@ -49,6 +58,7 @@ class NetroniGroupLight(LightEntity):
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_icon = "mdi:lightbulb-group-outline"
+    _attr_supported_features = LightEntityFeature.TRANSITION  # seconds, decimals too; done on the XP-Minis
 
     def __init__(self, hub: NetroniHub, group: dict) -> None:
         self.hub = hub
@@ -90,10 +100,10 @@ class NetroniGroupLight(LightEntity):
         fields: dict[str, Any] = {"on": True}
         if ATTR_BRIGHTNESS in kwargs:
             fields["brightness"] = max(1, int(kwargs[ATTR_BRIGHTNESS]))
-        await self._set(fields)
+        await self._set(_with_transition(fields, kwargs))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._set({"on": False})
+        await self._set(_with_transition({"on": False}, kwargs))
 
     async def _set(self, fields: dict) -> None:
         try:
@@ -103,6 +113,7 @@ class NetroniGroupLight(LightEntity):
 
 
 class NetroniLight(NetroniEntity, LightEntity):
+    _attr_supported_features = LightEntityFeature.TRANSITION  # seconds, decimals too; done on the XP-Mini
     def __init__(self, hub: NetroniHub, light: dict) -> None:
         super().__init__(hub, light["mini_uid"], light["id"])
         self.light_id = light["id"]
@@ -163,10 +174,10 @@ class NetroniLight(NetroniEntity, LightEntity):
             fields["brightness"] = max(1, kwargs[ATTR_BRIGHTNESS])
         if ATTR_COLOR_TEMP_KELVIN in kwargs:
             fields["color_temp_kelvin"] = kwargs[ATTR_COLOR_TEMP_KELVIN]
-        await self._set(fields)
+        await self._set(_with_transition(fields, kwargs))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._set({"on": False})
+        await self._set(_with_transition({"on": False}, kwargs))
 
     async def _set(self, fields: dict[str, Any]) -> None:
         try:
