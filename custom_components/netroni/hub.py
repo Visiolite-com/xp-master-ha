@@ -89,11 +89,12 @@ class NetroniHub:
             raise
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         old = self.config
+        old_prefix = self.entity_prefix if self.config else None
         self.master, self.config, self.states = hello["master"], config, states
         self.mini_updates = {m["uid"]: {"uid": m["uid"], **m["firmware_update"]}
                              for m in config.get("minis", []) if m.get("firmware_update")}
         self.kind = hello.get("kind") or "master"
-        self.async_migrate_unique_ids()
+        self.async_migrate_unique_ids(old_prefix)
         self._apply_renames(old)
         self.group_states = group_states
         self.update_status = update_status
@@ -250,8 +251,9 @@ class NetroniHub:
                 self.group_states.update(await self._group_states())
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("state refresh failed: %s", err)
+        old_prefix = self.entity_prefix
         old, self.config = self.config, config
-        self.async_migrate_unique_ids()
+        self.async_migrate_unique_ids(old_prefix)
         for mini in config.get("minis", []):
             if mini.get("firmware_update"):
                 self.mini_updates[mini["uid"]] = {"uid": mini["uid"], **mini["firmware_update"]}
@@ -372,18 +374,20 @@ class NetroniHub:
             )
 
     @callback
-    def async_migrate_unique_ids(self) -> None:
+    def async_migrate_unique_ids(self, old_prefix: str | None = None) -> None:
         """Entities of this entry still on the XP-Master's id ("XPM-E177_<light>"), once it has an
-        installation: onto the installation's ("<installation>_<light>"), keeping their entity ids,
-        names and areas, so automations go on working."""
+        installation, or on another installation (the XP-Bridge set up afresh took another one):
+        onto the installation's ("<installation>_<light>"), keeping their entity ids, names and
+        areas, so automations go on working."""
         prefix = self.entity_prefix
-        if prefix == self.master_id:
+        olds = [f"{p}_" for p in {self.master_id, old_prefix} if p and p != prefix]
+        if not olds:
             return
         ent_reg = er.async_get(self.hass)
-        old_prefix = f"{self.master_id}_"
         for reg_entry in er.async_entries_for_config_entry(ent_reg, self.entry.entry_id):
-            rest = reg_entry.unique_id.removeprefix(old_prefix)
-            if rest == reg_entry.unique_id or rest == "firmware":
+            old = next((o for o in olds if reg_entry.unique_id.startswith(o)), None)
+            rest = reg_entry.unique_id.removeprefix(old) if old else ""
+            if not rest or rest == "firmware":
                 continue
             new = f"{prefix}_{rest}"
             if ent_reg.async_get_entity_id(reg_entry.domain, DOMAIN, new) is None:
