@@ -14,7 +14,7 @@ const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays hig
 const MATTER_POLL_S = 10;
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
-const DMX_ROW = 32; // channels per line of the DMX monitor
+const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
 // An XP-Mini's DMX block: 16 channels at 8-bit (one per output), 32 at 16-bit (coarse, fine).
 const dmxSize = (resolution) => (resolution === 16 ? 32 : 16);
 const dmxRange = (start, resolution) => `${start}–${start + dmxSize(resolution) - 1}`;
@@ -840,7 +840,10 @@ class NetroniPanel extends HTMLElement {
   _dmxStatus(snap) {
     const rate = snap.fps != null ? `${Math.round(snap.fps)} frames/s` : `${snap.rate} frames/s`;
     const fixed = Object.entries(snap.fixed || {}).map(([a, v]) => `${a} = ${v}`).join(", ");
-    return `${this._chip(!snap.errors, "Sending", "Frames failing")}
+    const chip = snap.bridge?.connected === false
+      ? this._chip(false, "", "No bridge connected") // e.g. no BRIDGE Pico on the bench
+      : this._chip(!snap.errors, "Sending", "Frames failing");
+    return `${chip}
       ${this._fact("Port", esc(snap.device))}
       ${this._fact("Rate", rate)}
       ${this._fact("Fixed", fixed || "none")}`;
@@ -865,7 +868,7 @@ class NetroniPanel extends HTMLElement {
       return `<section class="card">${head}<div class="sub pad">${why}</div></section>`;
     }
     const entry = master.entry_id;
-    // Each line of 32 channels: its first channel, and the XP-Minis whose blocks start on it.
+    // Each line of 16 channels: its first channel, and the XP-Minis whose blocks start on it.
     let labels = "";
     for (let row = 1; row <= DMX_SLOTS; row += DMX_ROW) {
       const names = (snap.blocks || [])
@@ -1767,7 +1770,7 @@ const STYLE = `
   .dmx-label { font-size: 11px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden;
     display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   .dmx-label span { color: var(--primary-text-color); overflow: hidden; text-overflow: ellipsis; }
-  .dmx-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(32, 1fr); grid-auto-rows: var(--dmx-row); gap: 2px; }
+  .dmx-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(16, 1fr); grid-auto-rows: var(--dmx-row); gap: 2px; }
   .dmx-cell { border: 1px solid var(--line); border-radius: 3px; cursor: pointer; min-width: 0; }
   .dmx-cell.on { border-color: transparent; }
   .dmx-cell.fixed { box-shadow: inset 0 0 0 2px var(--warn); }
@@ -1778,9 +1781,8 @@ const STYLE = `
   .dmx-legend .dmx-cell { display: inline-block; width: 12px; height: 12px; cursor: default; }
   @media (max-width: 600px) {
     .inner { padding: 12px; }
-    .dmx-labels { width: 32px; grid-auto-rows: calc(2 * var(--dmx-row) + 2px); } /* a block takes two lines of 16 */
+    .dmx-labels { width: 32px; }
     .dmx-label span { display: none; }
-    .dmx-grid { grid-template-columns: repeat(16, 1fr); }
     .ports { grid-template-columns: 1fr 1fr; }
     .facts { gap: 8px 20px; }
   }
