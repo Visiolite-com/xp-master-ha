@@ -169,7 +169,9 @@ async def ws_scene_delete(hass: HomeAssistant, connection: websocket_api.ActiveC
 
 _ACTION = vol.Schema(
     {
-        vol.Required("kind"): vol.In(["none", "scene", "group_on", "group_off", "group_toggle", "group_level"]),
+        vol.Required("kind"): vol.In(
+            ["none", "scene", "scene_toggle", "scene_off", "group_on", "group_off", "group_toggle", "group_level"]
+        ),
         vol.Optional("scene_id"): str,
         vol.Optional("group_id"): str,
         vol.Optional("brightness"): vol.All(int, vol.Range(min=1, max=255)),

@@ -1471,12 +1471,13 @@ class NetroniPanel extends HTMLElement {
       <div class="packs">${blocks}</div></section>`;
   }
 
-  /** "Evening", "Kitchen ceiling on / off", "nothing". */
+  /** "Scene Evening", "Scene Evening on / off", "Kitchen ceiling on / off", "nothing". */
   _actionText(master, a) {
     if (!a || a.kind === "none") return "nothing";
     let text;
-    if (a.kind === "scene") {
+    if (a.kind.startsWith("scene")) {
       text = `Scene ${master.scenes.find((sc) => sc.id === a.scene_id)?.name || `${a.scene_id} (deleted)`}`;
+      text += { scene: "", scene_toggle: " on / off", scene_off: " off" }[a.kind] ?? "";
     } else {
       const group = master.groups.find((g) => g.id === a.group_id)?.name || `${a.group_id} (deleted)`;
       const how = { group_on: "on", group_off: "off", group_toggle: "on / off",
@@ -1488,7 +1489,7 @@ class NetroniPanel extends HTMLElement {
 
   _actionValue(a) {
     if (!a || a.kind === "none") return "none";
-    return a.kind === "scene" ? `scene:${a.scene_id}` : `${a.kind}:${a.group_id}`;
+    return a.kind.startsWith("scene") ? `${a.kind}:${a.scene_id}` : `${a.kind}:${a.group_id}`;
   }
 
   /** From a select's value; brightness and transition carry over. */
@@ -1496,7 +1497,7 @@ class NetroniPanel extends HTMLElement {
     if (value === "none") return { kind: "none" };
     const [kind, id] = [value.slice(0, value.indexOf(":")), value.slice(value.indexOf(":") + 1)];
     const out = { kind, transition: was?.transition ?? null };
-    if (kind === "scene") out.scene_id = id;
+    if (kind.startsWith("scene")) out.scene_id = id;
     else out.group_id = id;
     if (kind === "group_level") out.brightness = was?.brightness || 128;
     return out;
@@ -1507,7 +1508,9 @@ class NetroniPanel extends HTMLElement {
     const value = this._actionValue(a);
     const lock = this._busy ? "disabled" : "";
     const opt = (v, text) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(text)}</option>`;
-    const scenes = master.scenes.map((sc) => opt(`scene:${sc.id}`, sc.name)).join("");
+    // A scene: recalled at each press, or recalled and switched off in turn (kept on the X-Pack).
+    const scenes = master.scenes.map((sc) => `${opt(`scene:${sc.id}`, `${sc.name}: on`)}${opt(`scene_toggle:${sc.id}`, `${sc.name}: on / off`)}`)
+      .join("");
     const groups = master.groups.map((g) => `<optgroup label="${esc(g.name)}">
         ${opt(`group_toggle:${g.id}`, `${g.name}: on / off`)}${opt(`group_on:${g.id}`, `${g.name}: on`)}
         ${opt(`group_off:${g.id}`, `${g.name}: off`)}${opt(`group_level:${g.id}`, `${g.name}: a level`)}</optgroup>`).join("");
@@ -1516,7 +1519,7 @@ class NetroniPanel extends HTMLElement {
           value="${Math.round(((a.brightness || 128) / 255) * 100)}" ${lock}>%</span></label>` : "";
     const transition = a.kind === "none" ? "" : `<label class="field"><span>Transition</span><span class="sub seconds">
         <input id="in-${which}-tr" type="number" min="0" max="600" step="0.1" placeholder="—" value="${a.transition ?? ""}" ${lock}>
-        seconds (empty: ${a.kind === "scene" ? "the scene's own" : "each port's own"})</span></label>`;
+        seconds (empty: ${a.kind.startsWith("scene") ? "the scene's own" : "each port's own"})</span></label>`;
     return `<label class="field"><span>${label}</span>
         <select data-action="input-${which === "action" ? "action" : "action-off"}" ${lock}>
           ${opt("none", "Nothing")}
@@ -1582,7 +1585,7 @@ class NetroniPanel extends HTMLElement {
       : "";
     // What triggers it: buttons for now (optional: a scene needs none).
     const triggers = (master.packs || []).flatMap((p) => p.inputs
-      .filter((i) => [i.action, i.mode === "toggle" ? i.action_off : null].some((a) => a?.kind === "scene" && a.scene_id === scene.id))
+      .filter((i) => [i.action, i.mode === "toggle" ? i.action_off : null].some((a) => a?.kind?.startsWith("scene") && a.scene_id === scene.id))
       .map((i) => i.name || `${this._packName(p)} input ${i.input}`));
     const trigger = triggers.length ? ` · Button${triggers.length > 1 ? "s" : ""}: ${esc(triggers.join(", "))}` : "";
     return `
