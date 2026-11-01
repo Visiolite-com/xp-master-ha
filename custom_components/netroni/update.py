@@ -6,7 +6,8 @@ and restarts the containers, Home Assistant included. Progress comes as update_s
 
 The XP-Mini firmware is a product of its own: the service fetches its release too (update_status,
 xp_mini) and sends it to an XP-Mini over Data 2 (mini/update_firmware), which restarts into it;
-progress comes as mini_update_status events (xp-mini docs/updates.md).
+progress comes as mini_update_status events (xp-mini docs/updates.md). The X-Pack's firmware the same
+way (x_pack, pack/update_firmware, pack_update_status), on each X-Pack device.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from . import NetroniConfigEntry
 from .client import CommandError, NetroniError
 from .const import DOMAIN
 from .entity import NetroniEntity, async_track
-from .firmware import MINI_NOTE, MINI_OVER_DATA2, _version, mini_release
+from .firmware import MINI_NOTE, MINI_OVER_DATA2, PACK_NOTE, PACK_OVER_DATA2, _version, mini_release, pack_release
 from .hub import NetroniHub
 
 BRIDGE_NOTE = "This update includes the bridge firmware: the lights don't respond for a few seconds while it is installed."
@@ -40,6 +41,14 @@ async def async_setup_entry(
         async_add_entities,
         lambda config: {
             f"{m['uid']}/firmware": (lambda uid=m["uid"]: XpMiniUpdate(hub, uid)) for m in config.get("minis", [])
+        },
+    )
+    async_track(
+        entry,
+        hub,
+        async_add_entities,
+        lambda config: {
+            f"{p['uid']}/firmware": (lambda uid=p["uid"]: XPackUpdate(hub, uid)) for p in config.get("packs", [])
         },
     )
 
@@ -206,5 +215,99 @@ class XpMiniUpdate(NetroniEntity, UpdateEntity):
             await self.hub.client.call("mini/update_firmware", uid=self.mini_uid)
         except CommandError as err:
             raise HomeAssistantError(f"Cannot update this XP-Mini: {str(err).split(': ', 1)[-1]}") from err
+        except NetroniError as err:
+            raise HomeAssistantError(f"Cannot reach the {self.hub.product}: {err}") from err
+
+
+class XPackUpdate(UpdateEntity):
+    """An X-Pack's firmware: the release the service fetched, sent over Data 2 (from 0.2.0 on)."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_translation_key = "firmware"
+
+    def __init__(self, hub: NetroniHub, pack_uid: str) -> None:
+        self.hub = hub
+        self.pack_uid = pack_uid
+        self._attr_unique_id = f"{hub.entity_prefix}_{pack_uid}/firmware"
+        pack = hub.pack(pack_uid) or {}
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, pack_uid)}, name=pack.get("name") or f"X-Pack {pack_uid[-4:]}")
+
+    @property
+    def _pack(self) -> dict:
+        return self.hub.pack(self.pack_uid) or {}
+
+    @property
+    def _update(self) -> dict:
+        return self.hub.pack_updates.get(self.pack_uid) or {}
+
+    @property
+    def available(self) -> bool:
+        return self.hub.available and bool(self._pack.get("online"))
+
+    @property
+    def installed_version(self) -> str | None:
+        return self._pack.get("firmware")
+
+    @property
+    def _newer(self) -> bool:
+        release = pack_release(self.hub).get("release")
+        installed = _version(self.installed_version)
+        return bool(release and installed and _version(release) > installed)
+
+    @property
+    def _over_data2(self) -> bool:
+        return _version(self.installed_version) >= PACK_OVER_DATA2
+
+    @property
+    def latest_version(self) -> str | None:
+        return pack_release(self.hub)["release"] if self._newer else self.installed_version
+
+    @property
+    def supported_features(self) -> UpdateEntityFeature:
+        if self._over_data2:
+            return UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+        return UpdateEntityFeature(0)  # 0.1.0: USB once
+
+    @property
+    def release_url(self) -> str | None:
+        return pack_release(self.hub).get("notes_url")
+
+    @property
+    def release_summary(self) -> str | None:
+        parts = []
+        if self._newer and not self._over_data2:
+            parts.append("This X-Pack's firmware is from before 0.2.0: it needs one update by USB, "
+                         "then they come over the Visio-Link cable.")
+        if pack_release(self.hub).get("summary"):
+            parts.append(pack_release(self.hub)["summary"])
+        if self._newer and self._over_data2:
+            parts.append(PACK_NOTE)
+        if self._update.get("state") == "failed" and self._update.get("version") == pack_release(self.hub).get("release"):
+            parts.append(f"The last attempt failed: {self._update.get('error')}.")
+        return " ".join(parts)[:255] or None
+
+    @property
+    def in_progress(self) -> bool:
+        return self._update.get("state") in ("receiving", "restarting")
+
+    @property
+    def update_percentage(self) -> int | None:
+        if self._update.get("state") == "receiving":
+            return int((self._update.get("progress") or 0) * 0.9)  # sending is 90 %; then the restart
+        if self._update.get("state") == "restarting":
+            return 95
+        return None
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
+
+    async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
+        """Sent in the background; this returns once it started (progress: pack_update_status)."""
+        try:
+            await self.hub.client.call("pack/update_firmware", uid=self.pack_uid)
+        except CommandError as err:
+            raise HomeAssistantError(f"Cannot update this X-Pack: {str(err).split(': ', 1)[-1]}") from err
         except NetroniError as err:
             raise HomeAssistantError(f"Cannot reach the {self.hub.product}: {err}") from err

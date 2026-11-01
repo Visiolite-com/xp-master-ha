@@ -25,6 +25,15 @@ def mini_release(hub: NetroniHub) -> dict:
     return ((hub.update_status.get("xp_mini") or {}).get("latest")) or {}
 
 
+PACK_OVER_DATA2 = (0, 2, 0)  # the first X-Pack firmware that takes an update over Data 2
+PACK_NOTE = "The X-Pack restarts at the end: its buttons don't respond for about two seconds."
+
+
+def pack_release(hub: NetroniHub) -> dict:
+    """The X-Pack firmware release the XP-Master fetched (update/status, x_pack), or {}."""
+    return ((hub.update_status.get("x_pack") or {}).get("latest")) or {}
+
+
 def mini_update_available(hub: NetroniHub, mini: dict) -> str | None:
     """The newer XP-Mini firmware this XP-Mini can take over Data 2, or None (the entity and the panel)."""
     release = mini_release(hub).get("release")

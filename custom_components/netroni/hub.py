@@ -32,6 +32,7 @@ class NetroniHub:
         self.group_states: dict[str, dict] = {}  # group id -> {"on", "brightness"}
         self.update_status: dict = {}  # XP-Master updates (update/status); empty: not supported
         self.mini_updates: dict[str, dict] = {}  # uid -> its last mini_update_status (firmware updates)
+        self.pack_updates: dict[str, dict] = {}  # uid -> its last pack_update_status (X-Pack firmware)
         self.restore_offered = False  # a backup restore is offered: keep entities the settings lack
         self.available = False
         self.master_device_id: str | None = None  # device registry id, set during setup
@@ -182,6 +183,7 @@ class NetroniHub:
             ids.add(f"{prefix}{mini['uid']}/firmware")
         for pack in self.config.get("packs", []):
             ids.update(f"{prefix}{pack['uid']}/input{i['input']}" for i in pack.get("inputs", []))
+            ids.add(f"{prefix}{pack['uid']}/firmware")
             ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 
@@ -229,6 +231,9 @@ class NetroniHub:
             self.update_status = data
             if data.get("installed") != release and self.master_device_id:
                 dr.async_get(self.hass).async_update_device(self.master_device_id, sw_version=data.get("installed"))
+            self._notify()
+        elif event == "pack_update_status":
+            self.pack_updates[data.get("uid", "")] = data
             self._notify()
         elif event == "packs_changed":
             old = _structure(self.config)

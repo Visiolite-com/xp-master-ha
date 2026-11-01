@@ -1447,23 +1447,28 @@ class NetroniPanel extends HTMLElement {
   _buttonsCard(master) {
     const packs = master.packs || [];
     if (!packs.length) return "";
-    const rows = packs.map((pack) => pack.inputs.map((i) => {
-      const toggle = i.mode === "toggle";
-      const what = toggle
-        ? `${this._actionText(master, i.action)} · off: ${this._actionText(master, i.action_off)}`
-        : this._actionText(master, i.action);
-      const edit = this._admin && pack.online
-        ? `<button class="btn secondary" data-action="edit-input" data-entry="${master.entry_id}" data-uid="${esc(pack.uid)}" data-input="${i.input}">Edit</button>`
-        : "";
-      return `<div class="scene-entry input-row"><ha-icon icon="${toggle ? "mdi:toggle-switch-outline" : "mdi:gesture-tap-button"}"></ha-icon>
-        <div class="gr-name"><div class="light-name">${esc(i.name || `Input ${i.input}`)}</div>
-          <div class="light-sub">${esc(this._packName(pack))} · Input ${i.input} · ${toggle ? "Switch" : "Push button"}${pack.online ? "" : " · offline"}</div></div>
-        <div class="gr-pct">${esc(what)}</div>${edit}</div>`;
-    }).join("")).join("");
+    // One block per X-Pack, its inputs under it: as many as it reports (4 on an X-Pack-RS).
+    const blocks = packs.map((pack) => `<div class="pack">
+      <div class="pack-head"><ha-icon icon="mdi:light-switch"></ha-icon>
+        <div class="grow"><h4>${esc(this._packName(pack))}</h4>
+          <div class="light-sub">${pack.inputs.length} input${pack.inputs.length === 1 ? "" : "s"} · firmware ${esc(pack.firmware)}${pack.online ? "" : " · offline"}</div></div></div>
+      ${pack.inputs.map((i) => {
+        const toggle = i.mode === "toggle";
+        const what = toggle
+          ? `${this._actionText(master, i.action)} · off: ${this._actionText(master, i.action_off)}`
+          : this._actionText(master, i.action);
+        const edit = this._admin && pack.online
+          ? `<button class="btn secondary" data-action="edit-input" data-entry="${master.entry_id}" data-uid="${esc(pack.uid)}" data-input="${i.input}">Edit</button>`
+          : "";
+        return `<div class="scene-entry input-row"><ha-icon icon="${toggle ? "mdi:toggle-switch-outline" : "mdi:gesture-tap-button"}"></ha-icon>
+          <div class="gr-name"><div class="light-name">${esc(i.name || `Input ${i.input}`)}</div>
+            <div class="light-sub">Input ${i.input} · ${toggle ? "Switch" : "Push button"}</div></div>
+          <div class="gr-pct">${esc(what)}</div>${edit}</div>`;
+      }).join("")}</div>`).join("");
     return `<section class="card buttons-card">
       <div class="card-head"><ha-icon class="head-icon" icon="mdi:gesture-tap-button"></ha-icon>
         <div class="grow"><h2>Buttons</h2><div class="sub">What each X-Pack button or switch does. Kept on the X-Pack: it works without Home Assistant.</div></div></div>
-      <div class="scene-entries">${rows}</div></section>`;
+      <div class="packs">${blocks}</div></section>`;
   }
 
   /** "Evening", "Kitchen ceiling on / off", "nothing". */
@@ -2162,7 +2167,12 @@ const STYLE = `
   .btn.small { padding: 6px 12px; font-size: 13px; }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
-  .buttons-card { margin-top: 32px; } /* its own section, below the scenes and their New scene */
+  .buttons-card { margin-top: 32px; }
+  .packs { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+  .pack { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 2px; }
+  .pack-head { display: flex; align-items: center; gap: 12px; padding: 4px 0 8px; }
+  .pack-head ha-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); width: 28px; text-align: center; }
+  .pack-head h4 { margin: 0; } /* its own section, below the scenes and their New scene */
   .master-block + .master-block { margin-top: 40px; }
   .master-title { margin: 0 0 12px 4px; }
   .apps { display: flex; flex-direction: column; gap: 4px; }
