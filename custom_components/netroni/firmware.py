@@ -26,7 +26,7 @@ def mini_release(hub: NetroniHub) -> dict:
 
 
 PACK_OVER_DATA2 = (0, 2, 0)  # the first X-Pack firmware that takes an update over Data 2
-PACK_NOTE = "The X-Pack restarts at the end: its buttons don't respond for about two seconds."
+PACK_NOTE = "The X-Pack will restart at the end: its buttons won't respond for about two seconds."
 
 
 def pack_release(hub: NetroniHub) -> dict:
