@@ -38,6 +38,7 @@ class NetroniHub:
         self._listeners: set[Callable[[], None]] = set()
         self._identify_listeners: dict[str, set[Callable[[dict], None]]] = {}
         self._input_listeners: dict[tuple[str, int], set[Callable[[str], None]]] = {}
+        self._scene_listeners: dict[str, set[Callable[[], None]]] = {}
         # Open port-identification notifications: notification id -> light entity ids.
         self.identify_notifications: dict[str, set[str]] = {}
         self._stopping = False
@@ -235,6 +236,9 @@ class NetroniHub:
             if _structure(self.config) != old:
                 self._apply_structure()
             self._notify()
+        elif event == "scene_recalled":
+            for listener in list(self._scene_listeners.get(data.get("scene_id"), set())):
+                listener()
         elif event == "input_event":
             for listener in list(self._input_listeners.get((data.get("uid"), data.get("input")), set())):
                 listener(data.get("event", "pressed"))
@@ -258,6 +262,13 @@ class NetroniHub:
     def async_add_input_listener(self, pack_uid: str, number: int, listener: Callable[[str], None]) -> Callable[[], None]:
         """Be told of each press of an X-Pack's input ("pressed", "turned_on", "turned_off")."""
         listeners = self._input_listeners.setdefault((pack_uid, number), set())
+        listeners.add(listener)
+        return lambda: listeners.discard(listener)
+
+    @callback
+    def async_add_scene_listener(self, scene_id: str, listener: Callable[[], None]) -> Callable[[], None]:
+        """Be told of each recall of a scene, wherever it came from (Home Assistant, the app, a button)."""
+        listeners = self._scene_listeners.setdefault(scene_id, set())
         listeners.add(listener)
         return lambda: listeners.discard(listener)
 

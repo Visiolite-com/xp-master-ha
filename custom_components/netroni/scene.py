@@ -1,12 +1,14 @@
 """Scene entities: one per scene of the XP-Master or XP-Bridge (visiolink docs/ids.md). Activating one
 recalls it on every XP-Mini at once (one broadcast); its lights follow as their XP-Minis report them.
-A scene has no state of its own: Home Assistant shows when it was last activated."""
+A scene has no state of its own: Home Assistant shows when it was last activated, also when that was
+somewhere else (the app, an X-Pack's button), so automations on it run then too."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.scene import Scene
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -41,6 +43,7 @@ class NetroniScene(Scene):
         self.hub = hub
         self.scene_id = scene["id"]
         self._attr_unique_id = f"{hub.entity_prefix}_scene/{scene['id']}"
+        self._own_until = 0.0  # a recall started here: its report from the XP-Master is not a second one
 
     @property
     def name(self) -> str:
@@ -57,8 +60,19 @@ class NetroniScene(Scene):
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
+        self.async_on_remove(self.hub.async_add_scene_listener(self.scene_id, self._recalled))
+
+    @callback
+    def _recalled(self) -> None:
+        """The XP-Master recalled it: by Home Assistant (already recorded), or from elsewhere."""
+        if time.monotonic() < self._own_until:
+            self._own_until = 0.0
+            return
+        self._async_record_activation()
+        self.async_write_ha_state()
 
     async def async_activate(self, **kwargs: Any) -> None:
+        self._own_until = time.monotonic() + 5
         try:
             await self.hub.client.call("scene/recall", scene_id=self.scene_id)
         except NetroniError as err:
