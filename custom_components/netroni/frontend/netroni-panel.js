@@ -1794,6 +1794,8 @@ class NetroniPanel extends HTMLElement {
         <p class="sub">The new XP-Mini's own entry is removed, with any names given to its lights.</p>`;
       action = `<button class="btn" data-action="confirm-replace" ${this._busy ? "disabled" : ""}>Replace</button>`;
     }
+    // Redrawn on every tick or slider change: the dialog and its list stay where they were scrolled.
+    const scrolled = [".dialog", ".members"].map((sel) => [sel, host.querySelector(sel)?.scrollTop]);
     host.innerHTML = `
       <div class="scrim" data-action="scrim">
         <div class="dialog" role="dialog" aria-modal="true">
@@ -1805,6 +1807,10 @@ class NetroniPanel extends HTMLElement {
           </div>
         </div>
       </div>`;
+    for (const [sel, top] of scrolled) {
+      const el = host.querySelector(sel);
+      if (el && top) el.scrollTop = top;
+    }
   }
 }
 
