@@ -58,6 +58,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_scene_save,
         ws_set_transitions,
         ws_scene_delete,
+        ws_pack_set_input,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -160,6 +161,43 @@ async def ws_scene_delete(hass: HomeAssistant, connection: websocket_api.ActiveC
     hub = _hub(hass, msg["entry_id"])
     try:
         await hub.client.call("scene/delete", scene_id=msg["scene_id"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
+
+
+_ACTION = vol.Schema(
+    {
+        vol.Required("kind"): vol.In(["none", "scene", "group_on", "group_off", "group_toggle", "group_level"]),
+        vol.Optional("scene_id"): str,
+        vol.Optional("group_id"): str,
+        vol.Optional("brightness"): vol.All(int, vol.Range(min=1, max=255)),
+        vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
+    }
+)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/pack_set_input",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("input"): int,
+        vol.Optional("mode"): vol.In(["push", "toggle"]),
+        vol.Optional("name"): vol.All(str, vol.Length(max=32)),
+        vol.Optional("action"): _ACTION,
+        vol.Optional("action_off"): _ACTION,
+    }
+)
+@websocket_api.async_response
+async def ws_pack_set_input(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """What an X-Pack's input does: kept on the X-Pack itself, so it works with no XP-Master."""
+    hub = _hub(hass, msg["entry_id"])
+    fields = {k: msg[k] for k in ("mode", "name", "action", "action_off") if k in msg}
+    try:
+        await hub.client.call("pack/set_input", uid=msg["uid"], input=msg["input"], **fields)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return
@@ -303,6 +341,17 @@ def _overview(hass: HomeAssistant) -> dict:
                 "scenes": scenes,
                 # an XP-Master or XP-Bridge from before scenes has none in its configuration
                 "scenes_supported": "scenes" in hub.config,
+                "packs": [
+                    {
+                        **pack,
+                        "inputs": [
+                            {**i, "entity_id": ent_reg.async_get_entity_id(
+                                "event", DOMAIN, f"{hub.entity_prefix}_{pack['uid']}/input{i['input']}")}
+                            for i in pack.get("inputs", [])
+                        ],
+                    }
+                    for pack in hub.config.get("packs", [])
+                ],
             }
         )
     return {"masters": masters}

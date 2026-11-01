@@ -157,6 +157,18 @@
             }
           }
         }
+      },
+      "input": {
+        "name": "Input {input}",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "turned_on": "Turned on",
+              "turned_off": "Turned off"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {

@@ -367,6 +367,18 @@ class NetroniPanel extends HTMLElement {
         }
         break;
       }
+      case "edit-input": {
+        const pack = (this._master(d.entry)?.packs || []).find((p) => p.uid === d.uid);
+        const given = pack?.inputs.find((i) => i.input === Number(d.input));
+        if (given) {
+          this._openDialog({ kind: "input", entry: d.entry, uid: d.uid, input: given.input, name: given.name || "",
+            mode: given.mode, action: { ...given.action }, action_off: { ...given.action_off } });
+        }
+        break;
+      }
+      case "save-input":
+        this._saveInput();
+        break;
       case "recall-scene":
         this._hass
           .callService("scene", "turn_on", { entity_id: d.entity })
@@ -418,6 +430,22 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (this._dialog?.kind === "input") {
+      const d = this._dialog;
+      if (el.name === "input-mode") {
+        d.name = this.shadowRoot.getElementById("input-name")?.value ?? d.name;
+        d.mode = el.value;
+        this._renderDialog();
+        return;
+      }
+      const which = { "input-action": "action", "input-action-off": "action_off" }[el.dataset?.action];
+      if (which) {
+        d.name = this.shadowRoot.getElementById("input-name")?.value ?? d.name;
+        d[which] = this._actionFromValue(el.value, d[which]);
+        this._renderDialog();
+        return;
+      }
+    }
     if (el.name === "dmx-res" && this._dialog?.kind === "dmx") {
       this._pickDmxResolution(Number(el.value));
       return;
@@ -1405,7 +1433,121 @@ class NetroniPanel extends HTMLElement {
     const add = this._admin
       ? `<div class="actions"><button class="btn" data-action="new-scene" data-entry="${master.entry_id}">New scene</button></div>`
       : "";
-    return `<div class="master-block">${title}${intro}${scenes.map((s) => this._sceneCard(master, s)).join("")}${add}</div>`;
+    return `<div class="master-block">${title}${intro}${scenes.map((s) => this._sceneCard(master, s)).join("")}${add}${this._buttonsCard(master)}</div>`;
+  }
+
+  // --- buttons (X-Pack inputs) ---------------------------------------------------------------
+  // An input keeps its action on the X-Pack: it works with no XP-Master and no Home Assistant.
+  // A scene needs no button; a button is one way to trigger it (a schedule may be another).
+
+  _packName(pack) {
+    return pack.name || `X-Pack ${pack.uid.slice(-4)}`;
+  }
+
+  _buttonsCard(master) {
+    const packs = master.packs || [];
+    if (!packs.length) return "";
+    const rows = packs.map((pack) => pack.inputs.map((i) => {
+      const toggle = i.mode === "toggle";
+      const what = toggle
+        ? `${this._actionText(master, i.action)} · off: ${this._actionText(master, i.action_off)}`
+        : this._actionText(master, i.action);
+      const edit = this._admin && pack.online
+        ? `<button class="btn secondary" data-action="edit-input" data-entry="${master.entry_id}" data-uid="${esc(pack.uid)}" data-input="${i.input}">Edit</button>`
+        : "";
+      return `<div class="scene-entry input-row"><ha-icon icon="${toggle ? "mdi:toggle-switch-outline" : "mdi:gesture-tap-button"}"></ha-icon>
+        <div class="gr-name"><div class="light-name">${esc(i.name || `Input ${i.input}`)}</div>
+          <div class="light-sub">${esc(this._packName(pack))} · Input ${i.input} · ${toggle ? "Switch" : "Push button"}${pack.online ? "" : " · offline"}</div></div>
+        <div class="gr-pct">${esc(what)}</div>${edit}</div>`;
+    }).join("")).join("");
+    return `<section class="card">
+      <div class="card-head"><ha-icon class="head-icon" icon="mdi:gesture-tap-button"></ha-icon>
+        <div class="grow"><h2>Buttons</h2><div class="sub">What each X-Pack button or switch does. Kept on the X-Pack: it works without Home Assistant.</div></div></div>
+      <div class="scene-entries">${rows}</div></section>`;
+  }
+
+  /** "Evening", "Kitchen ceiling on / off", "nothing". */
+  _actionText(master, a) {
+    if (!a || a.kind === "none") return "nothing";
+    let text;
+    if (a.kind === "scene") {
+      text = `Scene ${master.scenes.find((sc) => sc.id === a.scene_id)?.name || `${a.scene_id} (deleted)`}`;
+    } else {
+      const group = master.groups.find((g) => g.id === a.group_id)?.name || `${a.group_id} (deleted)`;
+      const how = { group_on: "on", group_off: "off", group_toggle: "on / off",
+        group_level: `at ${Math.round(((a.brightness || 255) / 255) * 100)} %` }[a.kind];
+      text = `${group} ${how}`;
+    }
+    return a.transition == null ? text : `${text} · ${+a.transition.toFixed(3)} s`;
+  }
+
+  _actionValue(a) {
+    if (!a || a.kind === "none") return "none";
+    return a.kind === "scene" ? `scene:${a.scene_id}` : `${a.kind}:${a.group_id}`;
+  }
+
+  /** From a select's value; brightness and transition carry over. */
+  _actionFromValue(value, was) {
+    if (value === "none") return { kind: "none" };
+    const [kind, id] = [value.slice(0, value.indexOf(":")), value.slice(value.indexOf(":") + 1)];
+    const out = { kind, transition: was?.transition ?? null };
+    if (kind === "scene") out.scene_id = id;
+    else out.group_id = id;
+    if (kind === "group_level") out.brightness = was?.brightness || 128;
+    return out;
+  }
+
+  _actionField(master, d, which, label) {
+    const a = d[which];
+    const value = this._actionValue(a);
+    const lock = this._busy ? "disabled" : "";
+    const opt = (v, text) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(text)}</option>`;
+    const scenes = master.scenes.map((sc) => opt(`scene:${sc.id}`, sc.name)).join("");
+    const groups = master.groups.map((g) => `<optgroup label="${esc(g.name)}">
+        ${opt(`group_toggle:${g.id}`, `${g.name}: on / off`)}${opt(`group_on:${g.id}`, `${g.name}: on`)}
+        ${opt(`group_off:${g.id}`, `${g.name}: off`)}${opt(`group_level:${g.id}`, `${g.name}: a level`)}</optgroup>`).join("");
+    const level = a.kind === "group_level"
+      ? `<label class="field"><span>Level</span><span class="sub seconds"><input id="in-${which}-level" type="number" min="1" max="100"
+          value="${Math.round(((a.brightness || 128) / 255) * 100)}" ${lock}>%</span></label>` : "";
+    const transition = a.kind === "none" ? "" : `<label class="field"><span>Transition</span><span class="sub seconds">
+        <input id="in-${which}-tr" type="number" min="0" max="600" step="0.1" placeholder="—" value="${a.transition ?? ""}" ${lock}>
+        seconds (empty: ${a.kind === "scene" ? "the scene's own" : "each port's own"})</span></label>`;
+    return `<label class="field"><span>${label}</span>
+        <select data-action="input-${which === "action" ? "action" : "action-off"}" ${lock}>
+          ${opt("none", "Nothing")}
+          ${scenes ? `<optgroup label="Scenes">${scenes}</optgroup>` : ""}${groups}
+        </select></label>${level}${transition}`;
+  }
+
+  /** The action as set in the dialog; an error text if a value is out of range. */
+  _readAction(d, which) {
+    const a = { ...d[which] };
+    if (a.kind === "none") return { kind: "none" };
+    if (a.kind === "group_level") {
+      const pct = Number(this.shadowRoot.getElementById(`in-${which}-level`)?.value);
+      if (!(pct >= 1 && pct <= 100)) return "The level is 1 to 100 %";
+      a.brightness = Math.max(1, Math.round((pct / 100) * 255));
+    }
+    const tr = this.shadowRoot.getElementById(`in-${which}-tr`)?.value ?? "";
+    if (tr === "") a.transition = null;
+    else if (!(Number(tr) >= 0 && Number(tr) <= 600)) return "The transition is 0 to 600 seconds";
+    else a.transition = Number(tr);
+    return a;
+  }
+
+  async _saveInput() {
+    const d = this._dialog;
+    const msg = { type: "netroni/pack_set_input", entry_id: d.entry, uid: d.uid, input: d.input, mode: d.mode,
+      name: (this.shadowRoot.getElementById("input-name")?.value || "").trim() };
+    for (const which of d.mode === "toggle" ? ["action", "action_off"] : ["action"]) {
+      const a = this._readAction(d, which);
+      if (typeof a === "string") {
+        this._toast(a);
+        return;
+      }
+      msg[which] = a;
+    }
+    await this._run(() => this._call(msg));
   }
 
   /** "3 s", "0.5 s", or the ports' defaults: how a scene's changes go. */
@@ -1433,12 +1575,17 @@ class NetroniPanel extends HTMLElement {
     const edit = this._admin
       ? `<button class="btn secondary" data-action="edit-scene" data-entry="${master.entry_id}" data-scene="${esc(scene.id)}">Edit</button>`
       : "";
+    // What triggers it: buttons for now (optional: a scene needs none).
+    const triggers = (master.packs || []).flatMap((p) => p.inputs
+      .filter((i) => [i.action, i.mode === "toggle" ? i.action_off : null].some((a) => a?.kind === "scene" && a.scene_id === scene.id))
+      .map((i) => i.name || `${this._packName(p)} input ${i.input}`));
+    const trigger = triggers.length ? ` · Button${triggers.length > 1 ? "s" : ""}: ${esc(triggers.join(", "))}` : "";
     return `
       <section class="card scene-card">
         <div class="card-head">
           <ha-icon class="head-icon" icon="mdi:palette-outline"></ha-icon>
           <div class="grow"><h3>${esc(scene.name)}</h3>
-            <div class="sub">Scene · ${parts} · ${this._transitionText(scene.transition)}</div></div>
+            <div class="sub">Scene · ${parts} · ${this._transitionText(scene.transition)}${trigger}</div></div>
           <button class="btn" data-action="recall-scene" data-entity="${esc(scene.entity_id || "")}" ${scene.entity_id && master.connected ? "" : "disabled"}>Recall</button>
           ${edit}
         </div>
@@ -1696,6 +1843,25 @@ class NetroniPanel extends HTMLElement {
         <p class="sub">Each XP-Mini keeps its part and all of them change at once when the scene is recalled, also without Home Assistant. A light's own setting wins over its group's. A group's brightness is its level: its lights keep their own brightness under it.</p>`;
       action = `${d.sceneId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-scene" ${lock}>${d.confirmDelete ? "Delete for good" : "Delete scene"}</button>` : ""}
         <button class="btn" data-action="save-scene" ${lock}>Save</button>`;
+    } else if (d.kind === "input") {
+      const master = this._master(d.entry);
+      const pack = (master?.packs || []).find((p) => p.uid === d.uid) || { uid: d.uid };
+      const lock = this._busy ? "disabled" : "";
+      const toggle = d.mode === "toggle";
+      title = `Input ${d.input} of ${esc(this._packName(pack))}`;
+      body = `
+        <label class="field"><span>Name</span>
+          <input id="input-name" type="text" maxlength="32" value="${esc(d.name)}" placeholder="Input ${d.input}" ${lock}></label>
+        <div class="field"><span>Connected</span>
+          <label class="choice"><input type="radio" name="input-mode" value="push" ${toggle ? "" : "checked"} ${lock}>
+            <span><b>Push button</b><span class="sub">Each press does it.</span></span></label>
+          <label class="choice"><input type="radio" name="input-mode" value="toggle" ${toggle ? "checked" : ""} ${lock}>
+            <span><b>Switch</b><span class="sub">Turned on does one thing, turned off another.</span></span></label>
+        </div>
+        ${this._actionField(master, d, "action", toggle ? "When turned on" : "When pressed")}
+        ${toggle ? this._actionField(master, d, "action_off", "When turned off") : ""}
+        <p class="sub">Kept on the X-Pack: the button works the same without the XP-Master or Home Assistant. "On / off" switches the group the other way at each press.</p>`;
+      action = `<button class="btn" data-action="save-input" ${lock}>Save</button>`;
     } else if (d.kind === "cct") {
       const mini = this._mini(d.entry, d.uid);
       const light = this._master(d.entry)?.lights.find((l) => l.mini_uid === d.uid && l.key === `port${d.port}t`);
@@ -1893,6 +2059,7 @@ const STYLE = `
   .light-name.unnamed { color: var(--secondary-text-color); font-style: italic; }
   .light-sub { font-size: 12px; color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scene-entries { margin-top: 10px; }
+  .scene-entry.input-row { grid-template-columns: 28px minmax(0, 1fr) auto auto; }
   .scene-entry { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0;
     border-top: 1px solid var(--line); }
   .scene-entry ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); justify-self: center; }
@@ -1909,6 +2076,8 @@ const STYLE = `
   .scene-members { max-height: 380px; }
   .field .choice .seconds { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 13px; }
   .field .choice .seconds input { width: 72px; padding: 6px 8px; flex: none; margin: 0; }
+  .field > .seconds { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .field > .seconds input { width: 96px; flex: none; margin: 0; }
   .actions.left { justify-content: flex-start; }
   .tw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; cursor: pointer; user-select: none; }
   .tw.readonly { cursor: default; }

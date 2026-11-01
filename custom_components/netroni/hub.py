@@ -37,6 +37,7 @@ class NetroniHub:
         self.master_device_id: str | None = None  # device registry id, set during setup
         self._listeners: set[Callable[[], None]] = set()
         self._identify_listeners: dict[str, set[Callable[[dict], None]]] = {}
+        self._input_listeners: dict[tuple[str, int], set[Callable[[str], None]]] = {}
         # Open port-identification notifications: notification id -> light entity ids.
         self.identify_notifications: dict[str, set[str]] = {}
         self._stopping = False
@@ -178,6 +179,8 @@ class NetroniHub:
             ids.add(f"{prefix}{mini['uid']}/port_identified")
             ids.add(f"{prefix}{mini['uid']}/restart")
             ids.add(f"{prefix}{mini['uid']}/firmware")
+        for pack in self.config.get("packs", []):
+            ids.update(f"{prefix}{pack['uid']}/input{i['input']}" for i in pack.get("inputs", []))
             ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 
@@ -226,6 +229,15 @@ class NetroniHub:
             if data.get("installed") != release and self.master_device_id:
                 dr.async_get(self.hass).async_update_device(self.master_device_id, sw_version=data.get("installed"))
             self._notify()
+        elif event == "packs_changed":
+            old = _structure(self.config)
+            self.config["packs"] = data.get("packs", [])
+            if _structure(self.config) != old:
+                self._apply_structure()
+            self._notify()
+        elif event == "input_event":
+            for listener in list(self._input_listeners.get((data.get("uid"), data.get("input")), set())):
+                listener(data.get("event", "pressed"))
         elif event == "port_identified":
             from .identify import async_notify_port_identified  # avoid an import cycle
 
@@ -241,6 +253,16 @@ class NetroniHub:
         listeners = self._identify_listeners.setdefault(mini_uid, set())
         listeners.add(listener)
         return lambda: listeners.discard(listener)
+
+    @callback
+    def async_add_input_listener(self, pack_uid: str, number: int, listener: Callable[[str], None]) -> Callable[[], None]:
+        """Be told of each press of an X-Pack's input ("pressed", "turned_on", "turned_off")."""
+        listeners = self._input_listeners.setdefault((pack_uid, number), set())
+        listeners.add(listener)
+        return lambda: listeners.discard(listener)
+
+    def pack(self, uid: str) -> dict | None:
+        return next((p for p in self.config.get("packs", []) if p["uid"] == uid), None)
 
     async def _refresh_config(self) -> None:
         try:
@@ -411,7 +433,8 @@ class NetroniHub:
             if reg_entry.unique_id not in expected:
                 ent_reg.async_remove(reg_entry.entity_id)
         dev_reg = dr.async_get(self.hass)
-        known = {self.master_id} | {mini["uid"] for mini in self.config.get("minis", [])}
+        known = ({self.master_id} | {mini["uid"] for mini in self.config.get("minis", [])}
+                 | {pack["uid"] for pack in self.config.get("packs", [])})
         for device in dr.async_entries_for_config_entry(dev_reg, self.entry.entry_id):
             uids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
             if uids and not uids & known:
@@ -425,4 +448,5 @@ def _structure(config: dict) -> tuple:
         tuple(sorted(l["id"] for l in config.get("lights", []))),
         tuple(sorted(g["id"] for g in config.get("groups", []))),
         tuple(sorted(sc["id"] for sc in config.get("scenes", []))),
+        tuple(sorted((p["uid"], len(p.get("inputs", []))) for p in config.get("packs", []))),
     )
