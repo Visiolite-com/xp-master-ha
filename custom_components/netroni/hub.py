@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import time
 from collections.abc import Callable
 
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +17,7 @@ from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
 _LOGGER = logging.getLogger(__name__)
 
 MAX_RECONNECT_DELAY = 30
+STABLE_AFTER = 60  # s connected before a lost connection starts the backoff afresh
 OFFLINE_ISSUE = "mini_offline_"
 REPLACE_ISSUE = "mini_new_"  # Repairs issue: is this new XP-Mini replacing one that is offline?
 ALL_MINIS = "*"  # async_add_identify_listener key: every XP-Mini of this XP-Master  # Repairs issue id prefix, followed by the XP-Mini UID
@@ -43,6 +46,10 @@ class NetroniHub:
         # Open port-identification notifications: notification id -> light entity ids.
         self.identify_notifications: dict[str, set[str]] = {}
         self._stopping = False
+        # Reconnecting: a connection lost soon after it was made (a device starting up, or one short of
+        # memory closing it) backs off further, so a device coming back is not hammered.
+        self._connected_at = 0.0
+        self._reconnect_delay = 0.0
         # Platforms add entities for new lights / XP-Minis through these (see entity.async_track).
         self._structure_listeners: set[Callable[[], None]] = set()
 
@@ -90,6 +97,7 @@ class NetroniHub:
         except (CannotConnect, CommandError):
             await self.client.close()
             raise
+        self._connected_at = time.monotonic()
         changed = bool(self.config) and _structure(config) != _structure(self.config)
         old = self.config
         old_prefix = self.entity_prefix if self.config else None
@@ -336,14 +344,17 @@ class NetroniHub:
         _LOGGER.warning("lost connection to XP-Master at %s", self.client.url)
         self.available = False
         self._notify()
+        if time.monotonic() - self._connected_at >= STABLE_AFTER:
+            self._reconnect_delay = 1
+        else:  # it did not last: wait longer than last time
+            self._reconnect_delay = min(max(self._reconnect_delay, 1) * 2, MAX_RECONNECT_DELAY)
         self.entry.async_create_background_task(
-            self.hass, self._reconnect(), "netroni reconnect"
+            self.hass, self._reconnect(self._reconnect_delay), "netroni reconnect"
         )
 
-    async def _reconnect(self) -> None:
-        delay = 1
+    async def _reconnect(self, delay: float) -> None:
         while not self._stopping:
-            await asyncio.sleep(delay)
+            await asyncio.sleep(delay * random.uniform(0.8, 1.2))  # not in step with other clients
             try:
                 await self._connect_and_sync()
             except AuthFailed as err:
@@ -354,6 +365,7 @@ class NetroniHub:
             except (CannotConnect, CommandError) as err:
                 _LOGGER.debug("reconnect failed: %s", err)
                 delay = min(delay * 2, MAX_RECONNECT_DELAY)
+                self._reconnect_delay = delay
             else:
                 _LOGGER.info("reconnected to XP-Master at %s", self.client.url)
                 return
