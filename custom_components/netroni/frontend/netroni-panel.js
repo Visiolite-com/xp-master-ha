@@ -1460,7 +1460,7 @@ class NetroniPanel extends HTMLElement {
           <div class="light-sub">${esc(this._packName(pack))} · Input ${i.input} · ${toggle ? "Switch" : "Push button"}${pack.online ? "" : " · offline"}</div></div>
         <div class="gr-pct">${esc(what)}</div>${edit}</div>`;
     }).join("")).join("");
-    return `<section class="card">
+    return `<section class="card buttons-card">
       <div class="card-head"><ha-icon class="head-icon" icon="mdi:gesture-tap-button"></ha-icon>
         <div class="grow"><h2>Buttons</h2><div class="sub">What each X-Pack button or switch does. Kept on the X-Pack: it works without Home Assistant.</div></div></div>
       <div class="scene-entries">${rows}</div></section>`;
@@ -2162,6 +2162,7 @@ const STYLE = `
   .btn.small { padding: 6px 12px; font-size: 13px; }
   .btn:disabled { opacity: .5; cursor: default; }
   .actions { margin-top: 12px; }
+  .buttons-card { margin-top: 32px; } /* its own section, below the scenes and their New scene */
   .master-block + .master-block { margin-top: 40px; }
   .master-title { margin: 0 0 12px 4px; }
   .apps { display: flex; flex-direction: column; gap: 4px; }
