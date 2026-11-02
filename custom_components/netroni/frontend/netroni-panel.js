@@ -1362,7 +1362,7 @@ class NetroniPanel extends HTMLElement {
     const intro = groups.length
       ? ""
       : `<section class="card"><div class="card-head"><ha-icon class="head-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
-          <div class="grow"><h2>Groups</h2><div class="sub">${esc(master.name)} · Lights dimmed together: each keeps its own level, the group dims them all.</div></div></div>
+          <div class="grow"><h2>Groups</h2><div class="sub">${esc(master.name)} · Lights set together: each keeps its own brightness; switched on or set with the group, it gives out its brightness × the group's level, switched or set by itself just its brightness.</div></div></div>
           <div class="sub pad">No groups yet.</div></section>`;
     const add = this._admin
       ? `<div class="actions"><button class="btn" data-action="new-group" data-entry="${master.entry_id}">New group</button></div>`
@@ -1385,6 +1385,9 @@ class NetroniPanel extends HTMLElement {
         const unavailable = !st || st.state === "unavailable";
         const lit = st?.state === "on";
         const own = Number(st?.attributes.brightness ?? 0) || 0;
+        // × the level only while the group switched it on or set it last (follows_level; an older
+        // XP-Master doesn't say: every light follows); set alone, exactly its own brightness.
+        const follows = st?.attributes.follows_level !== false;
         const out = lit ? Math.round((own * groupLevel) / 255) : 0;
         const mini = this._miniName(master, light.mini_uid);
         return `
@@ -1392,7 +1395,7 @@ class NetroniPanel extends HTMLElement {
             <button class="lamp" data-action="toggle" data-entity="${esc(light.entity_id)}" ${unavailable ? "disabled" : ""}><ha-icon icon="mdi:lightbulb-outline"></ha-icon></button>
             <div class="gr-name"><div class="light-name">${esc(light.name || light.default_name)}</div><div class="light-sub">${esc(mini)} · ${light.key.replace("port", "").toUpperCase()}</div></div>
             <input class="slider own" type="range" min="1" max="255" value="${own || 255}" data-action="dim" data-entity="${esc(light.entity_id)}" ${unavailable ? "disabled" : ""}>
-            <div class="gr-pct">${unavailable ? "Unavailable" : lit ? `own ${pct(own)} → <b>${pct(out)}</b>` : "Off"}</div>
+            <div class="gr-pct">${unavailable ? "Unavailable" : !lit ? "Off" : follows ? `own ${pct(own)} → <b>${pct(out)}</b>` : `<b>${pct(own)}</b>`}</div>
           </div>`;
       })
       .join("");
@@ -1803,7 +1806,7 @@ class NetroniPanel extends HTMLElement {
         <label class="tw hide-row"><input type="checkbox" id="group-hide" ${d.hideMembers !== false ? "checked" : ""} ${this._busy ? "disabled" : ""}>
           <span class="switch"></span>Show only the group in Home Assistant and Matter apps</label>
         <p class="sub hide-note">Its lights are hidden on the Home Assistant dashboards (still usable in automations) and left out of SmartThings, Google Home and other Matter apps.</p>
-        <p class="sub">A light is in one group at most: to move one here, remove it from its group first. Dimming the group keeps the lights' own levels relative to each other.</p>`;
+        <p class="sub">A light is in one group at most: to move one here, remove it from its group first. The group's level scales the lights it switched on or set; each keeps its own brightness.</p>`;
       action = `${d.groupId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-group" ${this._busy ? "disabled" : ""}>${d.confirmDelete ? "Delete for good" : "Delete group"}</button>` : ""}
         <button class="btn" data-action="save-group" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "scene") {
@@ -1848,7 +1851,7 @@ class NetroniPanel extends HTMLElement {
         <div class="members-block"><div class="members-label">What it sets</div><div class="members scene-members">
           ${groups ? `<div class="member-mini">Groups</div>${groups}` : ""}${lights}</div></div>
         <div class="actions left"><button class="btn secondary" data-action="scene-now" ${Object.keys(d.entries).length && !this._busy ? "" : "disabled"}>Set from the lights as they are now</button></div>
-        <p class="sub">Each XP-Mini keeps its part and all of them change at once when the scene is recalled, also without Home Assistant. A light's own setting wins over its group's. A group's brightness is its level: its lights keep their own brightness under it.</p>`;
+        <p class="sub">Each XP-Mini keeps its part and all of them change at once when the scene is recalled, also without Home Assistant. A light's own setting wins over its group's. A group's brightness is its level: its lights keep their own brightness under it. A light with its own setting gives out exactly that.</p>`;
       action = `${d.sceneId ? `<button class="btn ${d.confirmDelete ? "danger" : "secondary"}" data-action="delete-scene" ${lock}>${d.confirmDelete ? "Delete for good" : "Delete scene"}</button>` : ""}
         <button class="btn" data-action="save-scene" ${lock}>Save</button>`;
     } else if (d.kind === "input") {

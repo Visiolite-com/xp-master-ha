@@ -157,6 +157,23 @@ class NetroniLight(NetroniEntity, LightEntity):
             return self._state.get("color_temp_kelvin")
         return None
 
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """In a group: whether the light follows the group's level (the group switched it on or set it
+        last), and what it gives out: its brightness, times the group's level when it follows it. Only
+        from an XP-Master or XP-Bridge that reports follows_level."""
+        state = self._state
+        if "follows_level" not in state:
+            return None
+        follows = bool(state["follows_level"])
+        brightness = int(state.get("brightness") or 0)
+        output = brightness
+        if follows:
+            group = (self.hub.light(self.light_id) or {}).get("group")
+            level = int(self.hub.group_states.get(group, {}).get("brightness") or 255)
+            output = max(1, min(255, (brightness * level + 127) // 255))
+        return {"follows_level": follows, "output_brightness": output if state.get("on") else 0}
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         light = self.hub.light(self.light_id) or {}
