@@ -24,7 +24,7 @@ from . import NetroniConfigEntry
 from .client import CommandError, NetroniError
 from .const import DOMAIN
 from .entity import NetroniEntity, async_track
-from .firmware import MINI_NOTE, MINI_OVER_DATA2, PACK_NOTE, PACK_OVER_DATA2, _version, mini_release, pack_release
+from .firmware import MINI_NOTE, MINI_OVER_DATA2, PACK_NOTE, PACK_OVER_DATA2, _version, for_board, mini_release, pack_release
 from .hub import NetroniHub
 
 BRIDGE_NOTE = "This update includes the bridge firmware: the lights don't respond for a few seconds while it is installed."
@@ -163,7 +163,8 @@ class XpMiniUpdate(NetroniEntity, UpdateEntity):
         """A newer release: not for a simulated XP-Mini, whose firmware isn't a version ("sim-0.4")."""
         release = self._release.get("release")
         installed = _version(self.installed_version)
-        return bool(release and installed and _version(release) > installed)
+        mini = self.hub.mini(self.mini_uid) or {}
+        return bool(release and installed and _version(release) > installed and for_board(self._release, mini))
 
     @property
     def _over_data2(self) -> bool:
@@ -254,7 +255,8 @@ class XPackUpdate(UpdateEntity):
     def _newer(self) -> bool:
         release = pack_release(self.hub).get("release")
         installed = _version(self.installed_version)
-        return bool(release and installed and _version(release) > installed)
+        return bool(release and installed and _version(release) > installed
+                    and for_board(pack_release(self.hub), self._pack))
 
     @property
     def _over_data2(self) -> bool:

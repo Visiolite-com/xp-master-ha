@@ -20,6 +20,14 @@ def _version(text: str | None) -> tuple[int, ...]:
         return ()
 
 
+def for_board(release: dict, device: dict) -> bool:
+    """The release has firmware for the device's board (its "board", visiolink docs/hardware.md). Not
+    known yet (not read, or an older XP-Master or XP-Bridge that doesn't report it): offered, and an
+    install without an image for it fails safely."""
+    board, boards = device.get("board"), release.get("hardware")
+    return board is None or boards is None or board in boards
+
+
 def mini_release(hub: NetroniHub) -> dict:
     """The XP-Mini firmware release the XP-Master fetched (update/status, xp_mini), or {}."""
     return ((hub.update_status.get("xp_mini") or {}).get("latest")) or {}
@@ -38,6 +46,6 @@ def mini_update_available(hub: NetroniHub, mini: dict) -> str | None:
     """The newer XP-Mini firmware this XP-Mini can take over Data 2, or None (the entity and the panel)."""
     release = mini_release(hub).get("release")
     firmware = mini.get("firmware")
-    if release and _version(release) > _version(firmware) and _version(firmware) >= MINI_OVER_DATA2:
+    if release and for_board(mini_release(hub), mini) and _version(release) > _version(firmware) and _version(firmware) >= MINI_OVER_DATA2:
         return release
     return None
