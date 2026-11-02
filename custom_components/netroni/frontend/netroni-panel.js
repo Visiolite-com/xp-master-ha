@@ -1330,6 +1330,18 @@ class NetroniPanel extends HTMLElement {
     const on = st?.state === "on";
     let state = unavailable ? "Unavailable" : on ? "On" : "Off";
     if (on && st.attributes.brightness) state = `${Math.round(st.attributes.brightness / 2.55)} %`;
+    // In a group that switched it on or set it last (follows_level; an older XP-Master doesn't say:
+    // every light follows): it gives out its own brightness × the group's level, as the app shows.
+    let levelLine = "";
+    const group = light.group && (master.groups || []).find((g) => g.id === light.group);
+    if (on && group && st.attributes.follows_level !== false) {
+      const own = Number(st.attributes.brightness ?? 255) || 255;
+      const level = Number(this._hass.states[group.entity_id]?.attributes.brightness ?? 255) || 255;
+      const out = st.attributes.output_brightness ?? Math.round((own * level) / 255);
+      const pct = (v) => `${Math.round((v / 255) * 100)} %`;
+      state = pct(out);
+      levelLine = `<div class="light-sub">${pct(own)} × ${esc(group.name)} ${pct(level)}</div>`;
+    }
     if (on && light.kind === "tunable_white" && st.attributes.color_temp_kelvin) state += ` · ${st.attributes.color_temp_kelvin} K`;
     const marked = hl && hl.lightIds.includes(light.id);
     const icon = light.kind === "tunable_white" ? "mdi:lightbulb-on-outline" : "mdi:lightbulb-outline";
@@ -1343,7 +1355,7 @@ class NetroniPanel extends HTMLElement {
         <div class="light-text" data-action="more-info" data-entity="${esc(light.entity_id)}" title="Brightness and colour">
           <div class="light-name ${light.name ? "" : "unnamed"}">${esc(light.name || light.default_name)}</div>
           <div class="light-sub">${tagOf(light)} · ${esc(light.area || "No area")} · ${state}</div>
-          ${this._groupChip(master, light)}
+          ${levelLine}${this._groupChip(master, light)}
         </div>
         ${edit}
       </div>`;
