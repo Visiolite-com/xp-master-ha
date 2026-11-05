@@ -71,15 +71,16 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         vol.Optional("scene_id"): str,  # absent: a new scene
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
         vol.Required("members"): [str],  # light and group ids: as they are now
-        # seconds, decimals allowed; absent or None: each port's default transition
+        # start and end: seconds, decimals allowed; absent or None: at once
         vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
+        vol.Optional("transition_end"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
     }
 )
 @websocket_api.async_response
 async def ws_scene_capture(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     """A scene of these lights and groups as they are now (Capture), new or over an existing one."""
     hub = _hub(hass, msg["entry_id"])
-    fields = {k: msg[k] for k in ("name", "members", "transition", "scene_id") if k in msg}
+    fields = {k: msg[k] for k in ("name", "members", "transition", "transition_end", "scene_id") if k in msg}
     try:
         result = await hub.client.call("scene/capture", **fields)
     except NetroniError as err:
@@ -130,16 +131,17 @@ _ENTRY = vol.Schema(
         vol.Required("entry_id"): str,
         vol.Optional("scene_id"): str,  # absent: a new scene
         vol.Required("name"): vol.All(str, vol.Length(min=1, max=64)),
-        # seconds, decimals allowed; absent or None: each port's default transition
+        # start and end: seconds, decimals allowed; absent or None: at once
         vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
+        vol.Optional("transition_end"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
         vol.Required("entries"): [_ENTRY],  # each a light or a group, with what it is set to
     }
 )
 @websocket_api.async_response
 async def ws_scene_save(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Create a scene from its entries, or change one (name, transition, entries)."""
+    """Create a scene from its entries, or change one (name, transitions, entries)."""
     hub = _hub(hass, msg["entry_id"])
-    fields = {k: msg[k] for k in ("name", "transition", "entries") if k in msg}
+    fields = {k: msg[k] for k in ("name", "transition", "transition_end", "entries") if k in msg}
     try:
         if "scene_id" in msg:
             await hub.client.call("scene/update", scene_id=msg["scene_id"], **fields)
@@ -170,12 +172,14 @@ async def ws_scene_delete(hass: HomeAssistant, connection: websocket_api.ActiveC
 _ACTION = vol.Schema(
     {
         vol.Required("kind"): vol.In(
-            ["none", "scene", "scene_toggle", "scene_off", "group_on", "group_off", "group_toggle", "group_level"]
+            ["none", "scene", "scene_toggle", "scene_off", "group_on", "group_off", "group_toggle",
+             "port_on", "port_off", "port_toggle"]
         ),
         vol.Optional("scene_id"): str,
         vol.Optional("group_id"): str,
-        vol.Optional("brightness"): vol.All(int, vol.Range(min=1, max=255)),
-        vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=600))),
+        vol.Optional("light_id"): vol.Any(None, str),
+        vol.Optional("brightness"): vol.Any(None, vol.All(int, vol.Range(min=1, max=255))),
+        vol.Optional("transition"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=25.4))),
     }
 )
 
@@ -307,8 +311,9 @@ def _overview(hass: HomeAssistant) -> dict:
             {
                 "id": scene["id"],
                 "name": scene["name"],
-                # ms; None: each port's default transition
+                # start and end, ms; None: at once
                 "transition": scene.get("transition"),
+                "transition_end": scene.get("transition_end"),
                 "entries": [{k: v for k, v in e.items() if v is not None} for e in scene.get("entries", [])],
                 "entity_id": ent_reg.async_get_entity_id("scene", DOMAIN, f"{hub.entity_prefix}_scene/{scene['id']}"),
             }

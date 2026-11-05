@@ -84,7 +84,10 @@ class NetroniGroupLight(LightEntity):
     @property
     def extra_state_attributes(self) -> dict:
         group = self.hub.group(self.group_id) or {}
-        return {"netroni_group_id": self.group_id, "members": group.get("members", [])}
+        state = self.hub.group_states.get(self.group_id, {})
+        # Home Assistant shows no brightness while it is off; partly on, it is off here.
+        return {"netroni_group_id": self.group_id, "members": group.get("members", []),
+                "partly_on": bool(state.get("partly")), "level": state.get("brightness")}
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self.hub.async_add_listener(self.async_write_ha_state))
