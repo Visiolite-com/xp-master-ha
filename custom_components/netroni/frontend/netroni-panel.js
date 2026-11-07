@@ -12,6 +12,7 @@ import "./netroni-icons.js";
 
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
 const MATTER_POLL_S = 10;
+const ARTNET_POLL_S = 3; // the Settings tab: what the Art-Net node receives
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -77,6 +78,8 @@ class NetroniPanel extends HTMLElement {
     this._remoteClosesAt = {}; // entry_id -> ms, when its remote access pairing window closes
     this._windowClosesAt = {}; // entry_id -> ms, when the open pairing window closes (from the bridge)
     this._dmx = {}; // entry_id -> netroni/dmx_snapshot result (plus fps, measured here)
+    this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
+    this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
     this._dmxPct = false; // show values as % instead of 0-255
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
     this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
@@ -222,6 +225,7 @@ class NetroniPanel extends HTMLElement {
       this._updateCountdowns();
       if (this._ticks % MATTER_POLL_S === 0) this._refreshMatter();
     }
+    if (this._tab === "settings" && this._ticks % ARTNET_POLL_S === 0) this._refreshArtnet();
     if (this._tab === "remote") {
       this._updateRemoteCountdowns();
       // While a pairing window is open, look often: the pairing appears as soon as it is made.
@@ -262,6 +266,7 @@ class NetroniPanel extends HTMLElement {
         this._renderMain();
         if (this._tab === "matter") this._refreshMatter();
         if (this._tab === "remote") this._refreshRemote();
+        if (this._tab === "settings") this._refreshArtnet();
         if (this._tab === "dmx") this._startDmxPoll();
         else this._stopDmxPoll();
         break;
@@ -450,6 +455,31 @@ class NetroniPanel extends HTMLElement {
           this._remoteCall(d.entry, "netroni/remote_revoke", { client_id: d.client });
         }
         break;
+      case "update-channel":
+        this._setChannel(d.entry, d.channel);
+        break;
+      case "mqtt-save":
+        this._saveMqtt(d.entry);
+        break;
+      case "mqtt-clear-password":
+        this._setMqtt(d.entry, { password: "" }).then((ok) => ok && this._toast("MQTT password removed"));
+        break;
+      case "artnet-universe": {
+        const status = this._artnet[d.entry];
+        this._openDialog({ kind: "universe", entry: d.entry, value: status?.port_address ?? 1 });
+        break;
+      }
+      case "save-universe":
+        this._saveUniverse();
+        break;
+      case "curve": {
+        const mini = this._mini(d.entry, d.uid);
+        this._openDialog({ kind: "curve", entry: d.entry, uid: d.uid, curve: mini?.dimming_curve ?? 6 });
+        break;
+      }
+      case "save-curve":
+        this._saveCurve();
+        break;
       case "scrim":
         if (ev.target === el) this._closeDialog();
         break;
@@ -545,6 +575,19 @@ class NetroniPanel extends HTMLElement {
     if (el.dataset?.action === "dmx-unit") {
       this._dmxPct = el.value === "pct";
       this._updateDmx();
+      return;
+    }
+    if (el.dataset?.action === "mqtt-enabled") {
+      this._setMqtt(el.dataset.entry, { enabled: el.checked });
+      return;
+    }
+    if (el.dataset?.action === "artnet-enabled" || el.dataset?.action === "artnet-pro") {
+      const field = el.dataset.action === "artnet-enabled" ? "enabled" : "pro_mode";
+      this._setArtnet(el.dataset.entry, { [field]: el.checked });
+      return;
+    }
+    if (el.name === "curve" && this._dialog?.kind === "curve") {
+      this._dialog.curve = Number(el.value);
       return;
     }
     if (el.dataset?.action !== "tw") return;
@@ -864,6 +907,216 @@ class NetroniPanel extends HTMLElement {
     }
   }
 
+  // --- the Settings tab ----------------------------------------------------------------------
+
+  async _refreshArtnet() {
+    let changed = false;
+    for (const master of this._xpMasters) {
+      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._mqtt, "netroni/mqtt_status"]]) {
+        let status;
+        try {
+          status = await this._hass.callWS({ type, entry_id: master.entry_id });
+        } catch (err) {
+          status = { failed: err.message || String(err) };
+        }
+        // frames go up all the time while a sender sends: not a reason to draw again
+        const sig = (s) => JSON.stringify({ ...s, frames: undefined });
+        if (sig(status) !== sig(store[master.entry_id] || {})) changed = true;
+        store[master.entry_id] = status;
+      }
+    }
+    // Not while an MQTT field is being typed in: drawing again would lose it.
+    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form");
+    if (changed && this._tab === "settings" && !typing) this._renderMain();
+  }
+
+  async _setMqtt(entry, fields) {
+    try {
+      this._mqtt[entry] = await this._call({ type: "netroni/mqtt_set", entry_id: entry, ...fields });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._renderMain();
+    }
+  }
+
+  async _saveMqtt(entry) {
+    const value = (name) => this.shadowRoot.getElementById(`mqtt-${name}-${entry}`)?.value.trim() ?? "";
+    const fields = { server: value("server"), username: value("username"), client_id: value("client"), prefix: value("prefix") };
+    const password = this.shadowRoot.getElementById(`mqtt-password-${entry}`)?.value ?? "";
+    if (password) fields.password = password; // empty: keep the one set
+    if (await this._setMqtt(entry, fields)) this._toast("MQTT settings saved");
+  }
+
+  _mqttSection(master) {
+    const entry = master.entry_id;
+    const status = this._mqtt[entry];
+    if (!status) return `<h4>MQTT</h4><div class="empty small">Loading…</div>`;
+    if (status.failed) return `<h4>MQTT</h4>${this._banner("warn", "mdi:alert-outline", `MQTT settings could not be read: ${esc(status.failed)}`)}`;
+    const lock = this._admin ? "" : "disabled";
+    let line = "";
+    if (status.enabled) {
+      line = status.connected
+        ? `Connected to <b>${esc(status.server)}</b> as ${esc(status.client_id_used)}. Topics start with <b>${esc(status.prefix_used)}/</b>.`
+        : `Not connected${status.error ? `: ${esc(status.error)}` : ""}. The XP-Master keeps trying in the background; everything else works as usual.`;
+    }
+    const field = (name, label, value, placeholder = "", type = "text") => `
+      <label class="field"><span>${label}</span>
+        <input id="mqtt-${name}-${entry}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" ${lock}></label>`;
+    return `
+      <h4>MQTT</h4>
+      <div class="set-row">
+        <div class="grow"><div>MQTT</div><div class="sub">Publishes the lights, groups and scenes to an MQTT broker, and takes commands from it, for other systems (Node-RED, a building management system…). Not encrypted yet: use it on a network you trust.</div></div>
+        <label class="tw"><input type="checkbox" data-action="mqtt-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock || (status.server ? "" : "disabled title=\"Fill in the server first\"")}><span class="switch"></span></label>
+      </div>
+      ${line ? `<div class="sub pad">${line}</div>` : ""}
+      <div class="mqtt-form">
+        <div class="field-row">${field("server", "Server (host or host:port)", status.server, "e.g. 192.168.1.10:1883")}${field("prefix", "Topic prefix", status.prefix, status.prefix_used)}</div>
+        <div class="field-row">${field("username", "Username", status.username)}${field("password", "Password", "", status.password_set ? "•••••••• (set; leave empty to keep it)" : "", "password")}</div>
+        <div class="field-row">${field("client", "Client ID", status.client_id, status.client_id_used)}<div class="field"></div></div>
+        ${this._admin ? `<div class="actions left"><button class="btn" data-action="mqtt-save" data-entry="${entry}">Save</button>
+          ${status.password_set ? `<button class="btn secondary" data-action="mqtt-clear-password" data-entry="${entry}">Remove password</button>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  async _setArtnet(entry, fields) {
+    try {
+      this._artnet[entry] = await this._call({ type: "netroni/artnet_set", entry_id: entry, ...fields });
+    } catch {}
+    this._renderMain(); // also puts a switch back when the change was refused
+  }
+
+  async _saveUniverse() {
+    const { entry } = this._dialog;
+    const value = Number(this.shadowRoot.getElementById("universe-value")?.value);
+    if (!Number.isInteger(value) || value < 0 || value > 32767) {
+      this._toast("The universe is a whole number, 0–32767");
+      return;
+    }
+    await this._run(async () => {
+      this._artnet[entry] = await this._call({ type: "netroni/artnet_set", entry_id: entry, port_address: value });
+      this._renderMain();
+    });
+  }
+
+  async _setChannel(entry, channel) {
+    try {
+      await this._call({ type: "netroni/update_channel", entry_id: entry, channel });
+      this._toast(channel === "beta" ? "Beta releases will be offered" : "Only stable releases will be offered");
+    } catch {}
+  }
+
+  async _saveCurve() {
+    const { entry, uid, curve } = this._dialog;
+    const mini = this._mini(entry, uid);
+    const label = mini?.settings_offered?.dimming_curves?.[String(curve)] || String(curve);
+    if (curve === mini?.dimming_curve) {
+      this._closeDialog();
+      return;
+    }
+    await this._run(async () => {
+      await this._call({ type: "netroni/set_curve", entry_id: entry, uid, curve });
+      this._toast(`${mini?.name || uid} now dims with ${label}`);
+    });
+  }
+
+  _settingsCard(master) {
+    const entry = master.entry_id;
+    const xpMaster = master.product !== "XP-Bridge";
+    const lock = this._admin ? "" : "disabled";
+    // This Home Assistant's own XP-Master is reached on 127.0.0.1: its address on the network is the
+    // one the Art-Net node reports, once read.
+    const loopback = ["127.0.0.1", "localhost", "::1"].includes(master.host);
+    const host = loopback ? this._artnet[entry]?.address || "" : master.host;
+    const device = master.device_id
+      ? `<a class="fact-link" data-action="device" data-device="${esc(master.device_id)}" title="Rename it on its device page">${esc(master.name)}</a>`
+      : esc(master.name);
+    let html = `
+      <h4>This ${esc(master.product || "XP-Master")}</h4>
+      <div class="facts">
+        ${this._fact("Name", device)}
+        ${host ? this._fact(/[a-z]/i.test(host) ? "Address" : "IP address", esc(host)) : ""}
+        ${this._fact("Serial", esc(master.master_id))}
+        ${master.release ? this._fact("Software", esc(master.release)) : ""}
+      </div>`;
+    if (master.update_channel) {
+      const seg = (channel, label) =>
+        `<button class="seg-btn ${master.update_channel === channel ? "active" : ""}" data-action="update-channel" data-entry="${entry}" data-channel="${channel}" ${lock}>${label}</button>`;
+      const available = master.update_available
+        ? `<div class="sub pad">Release ${esc(master.update_available)} is available: <a class="fact-link" data-action="more-info" data-entity="${esc(master.firmware_entity || "")}">install it</a>.</div>`
+        : "";
+      html += `
+        <h4>Firmware updates</h4>
+        <div class="set-row">
+          <div class="grow"><div>Update channel</div><div class="sub">Beta releases come earlier and are less tested: for test and demo installations.</div></div>
+          <div class="seg">${seg("stable", "Stable")}${seg("beta", "Beta")}</div>
+        </div>
+        ${available}`;
+    }
+    if (master.minis.length) {
+      // Each XP-Mini's own menu, as on its card in Installation: restart, DMX, dimming curve, reset, replace, remove.
+      html += `<h4>XP-Minis</h4>${master.minis
+        .map((mini) => `
+          <div class="set-row">
+            <div class="grow"><div>${esc(mini.name)}</div>
+              <div class="sub">${esc(mini.hardware_uid || mini.uid)} · ${mini.online ? `firmware ${esc(mini.firmware || "?")}` : "offline"}</div></div>
+            <button class="btn secondary" data-action="mini-actions" data-entry="${entry}" data-uid="${esc(mini.uid)}" ${this._admin ? "" : "disabled"}
+              title="Restart, DMX, dimming curve, factory reset, replace or remove">Manage…</button>
+          </div>`)
+        .join("")}`;
+    }
+    if (xpMaster) html += this._artnetSection(master) + this._mqttSection(master);
+    if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
+    return `
+      <section class="card">
+        <div class="card-head">
+          <ha-icon class="head-icon" icon="mdi:cog-outline"></ha-icon>
+          <div class="grow"><h2>${esc(master.name)}</h2><div class="sub">${esc(master.product || "XP-Master")} settings</div></div>
+        </div>
+        ${html}
+      </section>`;
+  }
+
+  _artnetSection(master) {
+    const entry = master.entry_id;
+    const status = this._artnet[entry];
+    let body;
+    if (!status) body = `<div class="empty small">Loading…</div>`;
+    else if (status.failed) body = this._banner("warn", "mdi:alert-outline", `Art-Net settings could not be read: ${esc(status.failed)}`);
+    else {
+      const lock = this._admin ? "" : "disabled";
+      const lines = [];
+      if (status.error) lines.push(`Not running: ${esc(status.error)}.`);
+      else if (status.enabled && status.listening) {
+        lines.push(`Senders send to <b>${esc(status.address)}</b>.`);
+        lines.push(status.receiving ? `Receiving from <b>${esc(status.source)}</b>.` : "Nothing received for this universe.");
+        if (status.second_source) lines.push(`${esc(status.second_source)} also sends to this universe and is ignored.`);
+        const other = status.other_universe;
+        if (other) {
+          const address = other.port_address ?? (other.net << 8 | other.subnet << 4 | other.universe);
+          lines.push(`${esc(other.source)} sends to universe ${address}, which this XP-Master doesn't respond as.`);
+        }
+      }
+      body = `
+        <div class="set-row">
+          <div class="grow"><div>Art-Net</div><div class="sub">Lets a lighting console or program control the lights over the network. Art-Net has no password: anyone on this network can then set the lights and change the XP-Minis' DMX settings.</div></div>
+          <label class="tw"><input type="checkbox" data-action="artnet-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+        </div>
+        <div class="set-row">
+          <div class="grow"><div>Pro Mode</div><div class="sub">For light installations with frequent changes: the XP-Minis save the values at most every 5 minutes, which spares their memory. Off: values are saved right away, as from the app.</div></div>
+          <label class="tw"><input type="checkbox" data-action="artnet-pro" data-entry="${entry}" ${status.pro_mode ? "checked" : ""} ${lock}><span class="switch"></span></label>
+        </div>
+        <div class="set-row">
+          <div class="grow"><div>Universe</div><div class="sub">The universe this XP-Master responds as, 0–32767. Some consoles count their universes from 1.</div></div>
+          <div class="set-value">${esc(status.port_address)}</div>
+          <button class="btn secondary" data-action="artnet-universe" data-entry="${entry}" ${lock}>Change</button>
+        </div>
+        ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
+    }
+    return `<h4>Art-Net</h4>${body}`;
+  }
+
   /** XP-Masters this Home Assistant runs on (remote access is set up there, not from a paired one). */
   _localMasters() {
     return (this._data?.masters || []).filter((m) => !m.remote);
@@ -1141,9 +1394,10 @@ class NetroniPanel extends HTMLElement {
         ${this._tabButton("installation", "Installation")}
         ${this._tabButton("groups", "Groups")}
         ${this._tabButton("scenes", "Scenes")}
-        ${this._xpMasters.length ? this._tabButton("matter", "Matter Connections") : ""}
+        ${this._xpMasters.length ? this._tabButton("matter", "Matter") : ""}
         ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
+        ${this._tabButton("settings", "Settings")}
       </div>
       <div class="content"><div class="inner">${this._body()}</div></div>`;
     if (scroll) this.shadowRoot.querySelector(".content").scrollTop = scroll;
@@ -1179,6 +1433,7 @@ class NetroniPanel extends HTMLElement {
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
     if (this._tab === "scenes") return this._data.masters.map((m) => this._scenesCard(m)).join("");
     if (this._tab === "dmx") return this._xpMasters.map((m) => this._dmxCard(m)).join("");
+    if (this._tab === "settings") return this._data.masters.map((m) => this._settingsCard(m)).join("");
     const minis = this._data.masters.reduce((n, m) => n + m.minis.length, 0);
     const bar = minis
       ? `<div class="fold-bar">
@@ -1756,7 +2011,7 @@ class NetroniPanel extends HTMLElement {
         <div class="card-head">
           <ha-icon class="head-icon" icon="mdi:access-point-network"></ha-icon>
           <div class="grow">
-            <h2>Matter Connections</h2>
+            <h2>Matter</h2>
             <div class="sub">${esc(master.name)} · SmartThings, Google Home, Alexa and Apple Home control the lights through Matter.</div>
           </div>
         </div>
@@ -1991,10 +2246,31 @@ class NetroniPanel extends HTMLElement {
       body = `<div class="menu">
         ${item("restart", "mdi:restart", "Restart", "Keeps all its settings; back within a few seconds.", mini?.online)}
         ${item("dmx", "mdi:tune-vertical", "DMX…", mini?.online ? `Channels ${dmxRange(mini.dmx_start, mini.dmx_resolution || 8)} at ${mini.dmx_resolution || 8}-bit; change them, or 8 or 16-bit, for a DMX console.` : "Only when it is online.", mini?.online)}
+        ${Object.keys(mini?.settings_offered?.dimming_curves || {}).length
+          ? item("curve", "mdi:chart-bell-curve-cumulative", "Dimming curve…",
+            mini?.online ? `${esc(mini.settings_offered.dimming_curves[String(mini.dimming_curve)] || "")}: how the brightness follows the level, for all its ports.` : "Only when it is online.", mini?.online)
+          : ""}
         ${item("reset", "mdi:backup-restore", "Factory reset…", "Forgets everything; found again as a new XP-Mini.", mini?.online, true)}
         ${item("replace", "mdi:swap-horizontal", "Replace…", mini?.online ? "Only when it is offline: a new XP-Mini takes its place." : "A new XP-Mini takes its place.", !mini?.online && spares)}
         ${item("remove", "mdi:delete-outline", "Remove…", mini?.online ? "Only when it is offline (disconnected for good)." : "Forget it: lights, names and DMX block.", !mini?.online, true)}
       </div>`;
+    } else if (d.kind === "curve") {
+      const mini = this._mini(d.entry, d.uid);
+      const curves = mini?.settings_offered?.dimming_curves || {};
+      title = `Dimming curve of ${esc(mini?.name || d.uid)}`;
+      body = `<div class="field">${Object.entries(curves)
+        .map(([id, label]) => `
+          <label class="choice"><input type="radio" name="curve" value="${esc(id)}" ${Number(id) === d.curve ? "checked" : ""}>
+            <span><b>${esc(label)}</b>${Number(id) === 6 ? `<span class="sub">The default: even steps for the eye.</span>` : ""}</span></label>`)
+        .join("")}</div>
+        <p class="sub">How the light's brightness follows the level, for all ports of this XP-Mini. Used at once.</p>`;
+      action = `<button class="btn" data-action="save-curve" ${this._busy ? "disabled" : ""}>Save</button>`;
+    } else if (d.kind === "universe") {
+      title = "Art-Net universe";
+      body = `<label class="field"><span>Universe (0–32767)</span>
+          <input id="universe-value" type="number" min="0" max="32767" step="1" value="${esc(d.value)}"></label>
+        <p class="sub">The universe this XP-Master responds as: the one set in the console's Art-Net output. In use at once.</p>`;
+      action = `<button class="btn" data-action="save-universe" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "dmx") {
       const mini = this._mini(d.entry, d.uid);
       const name = esc(mini?.name || d.uid);
@@ -2101,6 +2377,17 @@ const STYLE = `
   .chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); }
   .warn-text { color: var(--warn); }
   .facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 14px 0 2px; }
+  .set-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .set-row:first-of-type { border-top: 0; }
+  .set-value { font-size: 15px; font-weight: 500; }
+  .mqtt-form { margin-top: 4px; }
+  .mqtt-form .field-row { flex-wrap: wrap; }
+  .mqtt-form .field { min-width: 220px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; flex: none; }
+  .seg-btn { font: inherit; font-size: 14px; border: 0; background: none; color: var(--primary-text-color); padding: 7px 16px; cursor: pointer; }
+  .seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+  .seg-btn.active { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .seg-btn:disabled { cursor: default; opacity: .7; }
   .fact-label { font-size: 12px; color: var(--secondary-text-color); }
   .fact-value { font-size: 14px; margin-top: 2px; }
   .fact-link { color: var(--primary-color); cursor: pointer; text-decoration: none; }

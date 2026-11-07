@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .client import CommandError, NetroniError
@@ -59,6 +59,12 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_set_transitions,
         ws_scene_delete,
         ws_pack_set_input,
+        ws_set_curve,
+        ws_artnet_status,
+        ws_artnet_set,
+        ws_update_channel,
+        ws_mqtt_status,
+        ws_mqtt_set,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -251,6 +257,7 @@ def _overview(hass: HomeAssistant) -> dict:
                     "online": mini.get("online", True),
                     "dmx_start": mini["dmx_start"],
                     "dmx_resolution": mini.get("dmx_resolution", 8),
+                    "dimming_curve": mini.get("dimming_curve"),
                     # what its description says it takes; empty: not known (an older XP-Master)
                     "settings_offered": mini.get("settings_offered") or {},
                     # default transitions per port, ms: {"3": [up, down]}; ports not listed: 0
@@ -336,6 +343,8 @@ def _overview(hass: HomeAssistant) -> dict:
                 "update_available": (hub.update_status.get("latest") or {}).get("release")
                 if hub.update_status.get("update_available") else None,
                 "update_state": hub.update_status.get("state"),
+                # its release channel ("stable", "beta"); None: it has no updates
+                "update_channel": hub.update_status.get("channel") if hub.update_status else None,
                 "firmware_entity": ent_reg.async_get_entity_id("update", DOMAIN, f"{hub.master_id}_firmware"),
                 # Paired over remote access (this Home Assistant is not the XP-Master's own).
                 "remote": bool(hub.entry.data.get(CONF_TOKEN)),
@@ -731,6 +740,124 @@ async def ws_matter_close_window(
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"])
+
+
+# --- the Settings tab: an XP-Mini's dimming curve, Art-Net, the release channel ---
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/set_curve",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("curve"): vol.All(int, vol.Range(min=1, max=14)),
+    }
+)
+@websocket_api.async_response
+async def ws_set_curve(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """An XP-Mini's dimming curve, one of those its firmware offers (settings_offered)."""
+    try:
+        await _hub(hass, msg["entry_id"]).client.call("mini/set_curve", uid=msg["uid"], curve=msg["curve"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/artnet_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_artnet_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The Art-Net settings and what the node receives."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("artnet/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/artnet_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("pro_mode"): bool,
+        vol.Optional("port_address"): vol.All(int, vol.Range(min=0, max=32767)),
+    }
+)
+@websocket_api.async_response
+async def ws_artnet_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Art-Net on or off, Pro Mode, the universe: in use at once; the new status."""
+    fields = {k: msg[k] for k in ("enabled", "pro_mode", "port_address") if k in msg}
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("artnet/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/update_channel",
+        vol.Required("entry_id"): str,
+        vol.Required("channel"): vol.In(["stable", "beta"]),
+    }
+)
+@websocket_api.async_response
+async def ws_update_channel(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Stable or beta releases; a new channel is looked at at once."""
+    hub = _hub(hass, msg["entry_id"])
+    try:
+        before = hub.update_status.get("channel")
+        hub.update_status = await hub.client.call("update/set_channel", channel=msg["channel"])
+        if msg["channel"] != before:
+            hub.update_status = await hub.client.call("update/check")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    async_dispatcher_send(hass, SIGNAL_HUBS_CHANGED)  # the panel shows the channel
+    connection.send_result(msg["id"], hub.update_status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/mqtt_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_mqtt_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The MQTT settings (no password: only whether one is set) and the connection."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("mqtt/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/mqtt_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("server"): vol.All(str, vol.Length(max=200)),
+        vol.Optional("client_id"): vol.All(str, vol.Length(max=200)),
+        vol.Optional("prefix"): vol.All(str, vol.Length(max=200)),
+        vol.Optional("username"): vol.All(str, vol.Length(max=200)),
+        vol.Optional("password"): vol.All(str, vol.Length(max=200)),  # "": none
+    }
+)
+@websocket_api.async_response
+async def ws_mqtt_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """MQTT on or off and its connection: in use at once; the new status."""
+    fields = {k: msg[k] for k in ("enabled", "server", "client_id", "prefix", "username", "password") if k in msg}
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("mqtt/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
 
 
 # --- remote access: Home Assistants elsewhere on the LAN, paired with this XP-Master ---

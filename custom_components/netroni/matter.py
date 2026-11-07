@@ -34,11 +34,6 @@ async def async_open_window(hub: NetroniHub) -> dict:
     raise NetroniError("the pairing window did not open")
 
 
-def paired_apps_text(status: dict) -> str:
-    apps = [fabric.get("label") or fabric.get("vendor") for fabric in status.get("fabrics", [])]
-    return "\n".join(f"- {app}" for app in apps) or "- (none)"
-
-
 def qr_placeholders(status: dict) -> dict[str, str]:
     """QR image (PNG data URI) and setup code; builds the image, so run it in the executor."""
     qr = segno.make_qr(status["qr_code"], error="m")
