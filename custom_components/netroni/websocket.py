@@ -62,6 +62,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_set_curve,
         ws_artnet_status,
         ws_artnet_set,
+        ws_sacn_status,
+        ws_sacn_set,
         ws_update_channel,
         ws_mqtt_status,
         ws_mqtt_set,
@@ -793,6 +795,39 @@ async def ws_artnet_set(hass: HomeAssistant, connection: websocket_api.ActiveCon
     fields = {k: msg[k] for k in ("enabled", "pro_mode", "port_address") if k in msg}
     try:
         status = await _hub(hass, msg["entry_id"]).client.call("artnet/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/sacn_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_sacn_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The sACN settings and what the receiver receives."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("sacn/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/sacn_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("universe"): vol.All(int, vol.Range(min=1, max=63999)),
+    }
+)
+@websocket_api.async_response
+async def ws_sacn_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """sACN on or off, the universe: in use at once; the new status (Pro Mode: netroni/artnet_set)."""
+    fields = {k: msg[k] for k in ("enabled", "universe") if k in msg}
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("sacn/set", **fields)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

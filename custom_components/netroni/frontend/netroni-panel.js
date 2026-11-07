@@ -12,7 +12,11 @@ import "./netroni-icons.js";
 
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
 const MATTER_POLL_S = 10;
-const ARTNET_POLL_S = 3; // the Settings tab: what the Art-Net node receives
+const ARTNET_POLL_S = 3; // the Settings tab: what Art-Net, sACN and MQTT are doing
+const UNIVERSES = { artnet: [0, 32767], sacn: [1, 63999] };
+/** The other protocol has the universe: one source at a time across Art-Net and sACN. */
+const heldBy = (held, waiting) =>
+  `${held.protocol === "sacn" ? "sACN" : "Art-Net"} from <b>${esc(held.source)}</b> has the universe; ${waiting} waits until it stops.`;
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -80,6 +84,7 @@ class NetroniPanel extends HTMLElement {
     this._dmx = {}; // entry_id -> netroni/dmx_snapshot result (plus fps, measured here)
     this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
+    this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
     this._dmxPct = false; // show values as % instead of 0-255
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
     this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
@@ -466,7 +471,12 @@ class NetroniPanel extends HTMLElement {
         break;
       case "artnet-universe": {
         const status = this._artnet[d.entry];
-        this._openDialog({ kind: "universe", entry: d.entry, value: status?.port_address ?? 1 });
+        this._openDialog({ kind: "universe", protocol: "artnet", entry: d.entry, value: status?.port_address ?? 1 });
+        break;
+      }
+      case "sacn-universe": {
+        const status = this._sacn[d.entry];
+        this._openDialog({ kind: "universe", protocol: "sacn", entry: d.entry, value: status?.universe ?? 1 });
         break;
       }
       case "save-universe":
@@ -584,6 +594,10 @@ class NetroniPanel extends HTMLElement {
     if (el.dataset?.action === "artnet-enabled" || el.dataset?.action === "artnet-pro") {
       const field = el.dataset.action === "artnet-enabled" ? "enabled" : "pro_mode";
       this._setArtnet(el.dataset.entry, { [field]: el.checked });
+      return;
+    }
+    if (el.dataset?.action === "sacn-enabled") {
+      this._setSacn(el.dataset.entry, { enabled: el.checked });
       return;
     }
     if (el.name === "curve" && this._dialog?.kind === "curve") {
@@ -912,7 +926,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._mqtt, "netroni/mqtt_status"]]) {
+      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -987,15 +1001,24 @@ class NetroniPanel extends HTMLElement {
     this._renderMain(); // also puts a switch back when the change was refused
   }
 
+  async _setSacn(entry, fields) {
+    try {
+      this._sacn[entry] = await this._call({ type: "netroni/sacn_set", entry_id: entry, ...fields });
+    } catch {}
+    this._renderMain(); // also puts a switch back when the change was refused
+  }
+
   async _saveUniverse() {
-    const { entry } = this._dialog;
+    const { entry, protocol } = this._dialog;
+    const [low, high] = UNIVERSES[protocol];
     const value = Number(this.shadowRoot.getElementById("universe-value")?.value);
-    if (!Number.isInteger(value) || value < 0 || value > 32767) {
-      this._toast("The universe is a whole number, 0–32767");
+    if (!Number.isInteger(value) || value < low || value > high) {
+      this._toast(`The universe is a whole number, ${low}–${high}`);
       return;
     }
     await this._run(async () => {
-      this._artnet[entry] = await this._call({ type: "netroni/artnet_set", entry_id: entry, port_address: value });
+      if (protocol === "sacn") this._sacn[entry] = await this._call({ type: "netroni/sacn_set", entry_id: entry, universe: value });
+      else this._artnet[entry] = await this._call({ type: "netroni/artnet_set", entry_id: entry, port_address: value });
       this._renderMain();
     });
   }
@@ -1066,7 +1089,7 @@ class NetroniPanel extends HTMLElement {
           </div>`)
         .join("")}`;
     }
-    if (xpMaster) html += this._artnetSection(master) + this._mqttSection(master);
+    if (xpMaster) html += this._artnetSection(master) + this._sacnSection(master) + this._proModeSection(master) + this._mqttSection(master);
     if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
     return `
       <section class="card">
@@ -1092,6 +1115,7 @@ class NetroniPanel extends HTMLElement {
         lines.push(`Senders send to <b>${esc(status.address)}</b>.`);
         lines.push(status.receiving ? `Receiving from <b>${esc(status.source)}</b>.` : "Nothing received for this universe.");
         if (status.second_source) lines.push(`${esc(status.second_source)} also sends to this universe and is ignored.`);
+        if (status.held_by) lines.push(heldBy(status.held_by, "Art-Net"));
         const other = status.other_universe;
         if (other) {
           const address = other.port_address ?? (other.net << 8 | other.subnet << 4 | other.universe);
@@ -1104,10 +1128,6 @@ class NetroniPanel extends HTMLElement {
           <label class="tw"><input type="checkbox" data-action="artnet-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
         </div>
         <div class="set-row">
-          <div class="grow"><div>Pro Mode</div><div class="sub">For light installations with frequent changes: the XP-Minis save the values at most every 5 minutes, which spares their memory. Off: values are saved right away, as from the app.</div></div>
-          <label class="tw"><input type="checkbox" data-action="artnet-pro" data-entry="${entry}" ${status.pro_mode ? "checked" : ""} ${lock}><span class="switch"></span></label>
-        </div>
-        <div class="set-row">
           <div class="grow"><div>Universe</div><div class="sub">The universe this XP-Master responds as, 0–32767. Some consoles count their universes from 1.</div></div>
           <div class="set-value">${esc(status.port_address)}</div>
           <button class="btn secondary" data-action="artnet-universe" data-entry="${entry}" ${lock}>Change</button>
@@ -1115,6 +1135,57 @@ class NetroniPanel extends HTMLElement {
         ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
     }
     return `<h4>Art-Net</h4>${body}`;
+  }
+
+  _sacnSection(master) {
+    const entry = master.entry_id;
+    const status = this._sacn[entry];
+    let body;
+    if (!status) body = `<div class="empty small">Loading…</div>`;
+    else if (status.failed) body = this._banner("warn", "mdi:alert-outline", `sACN settings could not be read: ${esc(status.failed)}`);
+    else {
+      const lock = this._admin ? "" : "disabled";
+      const lines = [];
+      if (status.error) lines.push(`Not running: ${esc(status.error)}.`);
+      else if (status.enabled && status.listening) {
+        lines.push(status.multicast
+          ? `Consoles send by multicast (${esc(status.multicast)}) or to <b>${esc(status.address)}</b>.`
+          : `Consoles send to <b>${esc(status.address)}</b> (multicast could not be joined).`);
+        lines.push(status.receiving
+          ? `Receiving from <b>${esc(status.source)}</b>${status.source_name ? ` (${esc(status.source_name)})` : ""}, priority ${esc(status.priority)}.`
+          : "Nothing received for this universe.");
+        if (status.second_source) lines.push(`${esc(status.second_source)} also sends to this universe and is ignored: its priority is not higher.`);
+        if (status.held_by) lines.push(heldBy(status.held_by, "sACN"));
+        const other = status.other_universe;
+        if (other) lines.push(`${esc(other.source)} sends to universe ${esc(other.universe)}, which this XP-Master doesn't listen to.`);
+      }
+      body = `
+        <div class="set-row">
+          <div class="grow"><div>sACN</div><div class="sub">Lets a lighting console or program control the lights over the network, with a backup console taking over by priority. sACN has no password: anyone on this network can then set the lights.</div></div>
+          <label class="tw"><input type="checkbox" data-action="sacn-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+        </div>
+        <div class="set-row">
+          <div class="grow"><div>Universe</div><div class="sub">The sACN universe this XP-Master listens to, 1–63999.</div></div>
+          <div class="set-value">${esc(status.universe)}</div>
+          <button class="btn secondary" data-action="sacn-universe" data-entry="${entry}" ${lock}>Change</button>
+        </div>
+        ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
+    }
+    return `<h4>sACN</h4>${body}`;
+  }
+
+  /** One Pro Mode for Art-Net and sACN (kept with Art-Net's settings). */
+  _proModeSection(master) {
+    const entry = master.entry_id;
+    const status = this._artnet[entry];
+    if (!status || status.failed) return "";
+    const lock = this._admin ? "" : "disabled";
+    return `
+      <h4>Pro Mode</h4>
+      <div class="set-row">
+        <div class="grow"><div>Pro Mode</div><div class="sub">For Art-Net and sACN, in light installations with frequent changes: the XP-Minis save the values at most every 5 minutes, which spares their memory. Off: values are saved right away, as from the app.</div></div>
+        <label class="tw"><input type="checkbox" data-action="artnet-pro" data-entry="${entry}" ${status.pro_mode ? "checked" : ""} ${lock}><span class="switch"></span></label>
+      </div>`;
   }
 
   /** XP-Masters this Home Assistant runs on (remote access is set up there, not from a paired one). */
@@ -2266,10 +2337,12 @@ class NetroniPanel extends HTMLElement {
         <p class="sub">How the light's brightness follows the level, for all ports of this XP-Mini. Used at once.</p>`;
       action = `<button class="btn" data-action="save-curve" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "universe") {
-      title = "Art-Net universe";
-      body = `<label class="field"><span>Universe (0–32767)</span>
-          <input id="universe-value" type="number" min="0" max="32767" step="1" value="${esc(d.value)}"></label>
-        <p class="sub">The universe this XP-Master responds as: the one set in the console's Art-Net output. In use at once.</p>`;
+      const [low, high] = UNIVERSES[d.protocol];
+      const name = d.protocol === "sacn" ? "sACN" : "Art-Net";
+      title = `${name} universe`;
+      body = `<label class="field"><span>Universe (${low}–${high})</span>
+          <input id="universe-value" type="number" min="${low}" max="${high}" step="1" value="${esc(d.value)}"></label>
+        <p class="sub">The universe this XP-Master ${d.protocol === "sacn" ? "listens to" : "responds as"}: the one set in the console's ${name} output. In use at once.</p>`;
       action = `<button class="btn" data-action="save-universe" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "dmx") {
       const mini = this._mini(d.entry, d.uid);
