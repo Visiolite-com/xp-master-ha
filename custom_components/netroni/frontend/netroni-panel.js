@@ -1189,13 +1189,10 @@ class NetroniPanel extends HTMLElement {
       const lock = this._admin ? "" : "disabled";
       const lines = [];
       if (status.enabled) {
-        if (status.connected) {
-          lines.push("Reachable from outside the home.");
-          if (status.clients) lines.push(`${status.clients} app connection${status.clients === 1 ? "" : "s"} from outside right now.`);
-        } else {
-          lines.push(`Not connected${status.error ? `: ${esc(status.error)}` : ""}. The XP-Master keeps trying in the background; everything else works as usual.`);
-        }
-        if (status.paired === false) lines.push("No app is paired with this XP-Master yet: pair one at home first.");
+        if (status.paired === false) lines.push("Pair an app at home first.");
+        else if (!status.connected) lines.push(`Not reachable${status.error ? `: ${esc(status.error)}` : ""}. Retrying…`);
+        else if (status.apps?.length) lines.push(`In use from outside: ${status.apps.map(esc).join(", ")}.`);
+        else lines.push("Reachable from outside the home.");
       }
       body = `
         <div class="set-row">
