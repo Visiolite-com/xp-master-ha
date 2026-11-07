@@ -260,6 +260,25 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+def artnet_status_text(status: dict[str, Any]) -> str:
+    """What the node is doing, for the Art-Net dialog."""
+    if status.get("error"):
+        return f"Not running: {status['error']}."
+    if not status.get("listening"):
+        return "Off."
+    lines = [f"Senders send to {status['address']}."]
+    if status.get("receiving"):
+        lines.append(f"Receiving from {status['source']}.")
+    else:
+        lines.append("Nothing received for this universe.")
+    if status.get("second_source"):
+        lines.append(f"{status['second_source']} also sends to this universe and is ignored.")
+    if other := status.get("other_universe"):
+        address = other.get("port_address", other["net"] << 8 | other["subnet"] << 4 | other["universe"])
+        lines.append(f"{other['source']} sends to universe {address}, which this XP-Master doesn't respond as.")
+    return "\n\n".join(lines)
+
+
 class NetroniOptionsFlow(OptionsFlow):
     """Configure: tunable-white ports per XP-Mini, and pairing with Matter apps."""
 
@@ -276,9 +295,9 @@ class NetroniOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="not_loaded")
-        options = ["tunable_white", "matter", "restart", "replace", "factory_reset", "updates"]
-        if self._hub.kind == "stick":  # an XP-Bridge has no Matter bridge
-            options = [o for o in options if o != "matter"]
+        options = ["tunable_white", "matter", "artnet", "restart", "replace", "factory_reset", "updates"]
+        if self._hub.kind == "stick":  # an XP-Bridge has no Matter bridge and no Art-Net node
+            options = [o for o in options if o not in ("matter", "artnet")]
         return self.async_show_menu(step_id="init", menu_options=options, description_placeholders={"product": self._hub.product})
 
     # --- XP-Master updates: stable or beta releases ---
@@ -301,6 +320,26 @@ class NetroniOptionsFlow(OptionsFlow):
             step_id="updates",
             data_schema=vol.Schema({vol.Required("beta", default=status.get("channel") == "beta"): bool}),
             description_placeholders={"installed": status.get("installed") or "unknown", **product},
+        )
+
+    # --- Art-Net: the XP-Master as a node, which universe it responds as ---
+
+    async def async_step_artnet(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        try:
+            if user_input is not None:
+                await self._hub.client.call("artnet/set", **user_input)
+                return self.async_abort(reason="artnet_on" if user_input["enabled"] else "artnet_off")
+            status = await self._hub.client.call("artnet/get")
+        except NetroniError as err:
+            return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
+        return self.async_show_form(
+            step_id="artnet",
+            data_schema=vol.Schema({
+                vol.Required("enabled", default=status["enabled"]): bool,
+                vol.Required("pro_mode", default=status.get("pro_mode", False)): bool,
+                vol.Required("port_address", default=status["port_address"]): vol.All(int, vol.Range(min=0, max=32767)),
+            }),
+            description_placeholders={"status": artnet_status_text(status)},
         )
 
     # Home Assistant dialogs have no back button: "Back" is a menu entry that returns to "init".
@@ -340,7 +379,7 @@ class NetroniOptionsFlow(OptionsFlow):
         # useful message and a Close button instead of "Options successfully saved".
         return self.async_abort(reason="matter_done")
 
-    # --- Configure ports ---
+    # --- XP-Mini settings: ports, dimming curve ---
 
     async def async_step_tunable_white(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         options = {
@@ -352,7 +391,7 @@ class NetroniOptionsFlow(OptionsFlow):
         return self.async_show_menu(step_id="tunable_white", menu_options=options)
 
     def __getattr__(self, name: str):
-        """Menu entries mini_0, mini_1, ... of "Configure ports" and reset_0, ... of "Factory reset":
+        """Menu entries mini_0, mini_1, ... of "XP-Mini settings" and reset_0, ... of "Factory reset":
         one step per XP-Mini."""
         for prefix, next_step in (
             ("async_step_mini_", "async_step_ports"),
@@ -487,23 +526,41 @@ class NetroniOptionsFlow(OptionsFlow):
         if mini is None:
             return self.async_abort(reason="mini_gone")
         current = set(mini["pairs"])
+        curves = (mini.get("settings_offered") or {}).get("dimming_curves") or {}
         if user_input is not None:
+            curve = int(user_input.get("dimming_curve", mini.get("dimming_curve", 0)))
+            curve_changed = curve != mini.get("dimming_curve")
+            if curve_changed:  # at once: a curve changes no lights, so it needs no confirmation
+                try:
+                    await self._hub.client.call("mini/set_curve", uid=self._uid, curve=curve)
+                except NetroniError as err:
+                    return self.async_abort(reason="set_failed", description_placeholders={"error": str(err)})
             wanted = {int(c) for c in user_input["paired"]}
             self._pair, self._unpair = sorted(wanted - current), sorted(current - wanted)
             if not self._pair and not self._unpair:
+                if curve_changed:
+                    return self.async_abort(
+                        reason="curve_set", description_placeholders={"mini": mini["name"], "curve": curves.get(str(curve), str(curve))}
+                    )
                 return self.async_abort(reason="no_changes")
             return await self.async_step_confirm()
         options = [
             SelectOptionDict(value=str(p), label=f"Port {p}A + Port {p}B → Port {p}T")
             for p in range(1, PORTS_PER_MINI + 1)
         ]
-        schema = vol.Schema(
-            {
-                vol.Optional("paired", default=[str(c) for c in sorted(current)]): SelectSelector(
-                    SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST)
+        fields = {
+            vol.Optional("paired", default=[str(c) for c in sorted(current)]): SelectSelector(
+                SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST)
+            )
+        }
+        if curves:  # its firmware has them (XP-Mini 0.14.0), and it has been described
+            fields[vol.Required("dimming_curve", default=str(mini.get("dimming_curve", 6)))] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[SelectOptionDict(value=k, label=v) for k, v in curves.items()],
+                    mode=SelectSelectorMode.DROPDOWN,
                 )
-            }
-        )
+            )
+        schema = vol.Schema(fields)
         return self.async_show_form(
             step_id="ports", data_schema=schema, description_placeholders={"mini": mini["name"]}
         )

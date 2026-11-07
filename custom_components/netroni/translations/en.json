@@ -50,8 +50,9 @@
       "init": {
         "title": "Configuration",
         "menu_options": {
-          "tunable_white": "Configure ports",
+          "tunable_white": "XP-Mini settings: ports, dimming curve",
           "matter": "Matter: SmartThings, Google Home, Alexa, Apple Home",
+          "artnet": "Art-Net",
           "restart": "Restart an XP-Mini",
           "factory_reset": "Factory reset an XP-Mini",
           "replace": "Replace an XP-Mini",
@@ -60,14 +61,15 @@
         "description": "What would you like to set up on this {product}?"
       },
       "tunable_white": {
-        "title": "Configure ports",
+        "title": "XP-Mini settings",
         "description": "Pick the XP-Mini to configure. Use its Identify Port buttons to find the fixtures if needed."
       },
       "ports": {
-        "title": "Tunable-white ports on {mini}",
-        "description": "Tick a port to make it one tunable-white light (Port nT): A is warm white, B is cool white. Untick it to split it back into two dimmable lights, Port nA and Port nB.",
+        "title": "Settings of {mini}",
+        "description": "Tick a port to make it one tunable-white light (Port nT): A is warm white, B is cool white. Untick it to split it back into two dimmable lights, Port nA and Port nB.\n\nThe dimming curve sets how the brightness follows the level, for all ports of this XP-Mini. LED Linear (CIE 1931) is the default.",
         "data": {
-          "paired": "Tunable-white ports"
+          "paired": "Tunable-white ports",
+          "dimming_curve": "Dimming curve"
         }
       },
       "confirm": {
@@ -107,6 +109,15 @@
         "title": "Restart an XP-Mini",
         "description": "Pick the XP-Mini to restart. It keeps all its settings and is back within a few seconds; its lights may flicker off meanwhile. Each XP-Mini also has a Restart button on its device page."
       },
+      "artnet": {
+        "title": "Art-Net",
+        "description": "Lets a lighting console or program control the lights over the network. Art-Net has no password: anyone on this network can then set the lights and change the XP-Minis' DMX settings.\n\nPro Mode is for light installations with frequent changes: the XP-Minis save the values at most every 5 minutes, which spares their memory. Leave it off to use Art-Net as a remote control: values are saved right away, as from the app.\n\n{status}",
+        "data": {
+          "enabled": "Art-Net on",
+          "pro_mode": "Pro Mode",
+          "port_address": "Universe (0-32767)"
+        }
+      },
       "updates": {
         "title": "Firmware updates",
         "description": "This {product} runs release {installed}. New releases appear under Settings → Updates; nothing is installed until you press Install.\n\nBeta releases come earlier and are less tested: for test and demo installations.",
@@ -119,7 +130,10 @@
       "not_loaded": "The XP-Master is not connected. Try again when it is online.",
       "mini_gone": "That XP-Mini is no longer part of this XP-Master.",
       "no_changes": "Nothing was changed.",
+      "curve_set": "The dimming curve of {mini} is now {curve}.",
       "set_failed": "The XP-Master rejected the change: {error}",
+      "artnet_on": "Art-Net is on.",
+      "artnet_off": "Art-Net is off. The lights keep their levels.",
       "matter_unavailable": "The Matter bridge of the XP-Master is not running.",
       "matter_starting": "The Matter bridge of the XP-Master is starting. Try again in a minute.",
       "matter_failed": "Matter pairing failed: {error}",
