@@ -64,6 +64,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_artnet_set,
         ws_sacn_status,
         ws_sacn_set,
+        ws_relay_status,
+        ws_relay_set,
         ws_update_channel,
         ws_mqtt_status,
         ws_mqtt_set,
@@ -828,6 +830,33 @@ async def ws_sacn_set(hass: HomeAssistant, connection: websocket_api.ActiveConne
     fields = {k: msg[k] for k in ("enabled", "universe") if k in msg}
     try:
         status = await _hub(hass, msg["entry_id"]).client.call("sacn/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/relay_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_relay_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Access from outside the home: the setting and the connection to the Netroni relay."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("relay/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/relay_set", vol.Required("entry_id"): str, vol.Required("enabled"): bool}
+)
+@websocket_api.async_response
+async def ws_relay_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Access from outside the home on or off: in use at once; the new status."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("relay/set", enabled=msg["enabled"])
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

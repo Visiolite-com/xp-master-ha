@@ -85,6 +85,7 @@ class NetroniPanel extends HTMLElement {
     this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
     this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
+    this._relay = {}; // entry_id -> netroni/relay_status result, or {failed}
     this._dmxPct = false; // show values as % instead of 0-255
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
     this._dmxSig = ""; // what the rendered grids are built from; a change means a full re-render
@@ -596,6 +597,10 @@ class NetroniPanel extends HTMLElement {
       this._setArtnet(el.dataset.entry, { [field]: el.checked });
       return;
     }
+    if (el.dataset?.action === "relay-enabled") {
+      this._setRelay(el.dataset.entry, el.checked);
+      return;
+    }
     if (el.dataset?.action === "sacn-enabled") {
       this._setSacn(el.dataset.entry, { enabled: el.checked });
       return;
@@ -926,7 +931,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"]]) {
+      for (const [store, type] of [[this._relay, "netroni/relay_status"], [this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -1089,7 +1094,7 @@ class NetroniPanel extends HTMLElement {
           </div>`)
         .join("")}`;
     }
-    if (xpMaster) html += this._artnetSection(master) + this._sacnSection(master) + this._proModeSection(master) + this._mqttSection(master);
+    if (xpMaster) html += this._relaySection(master) + this._artnetSection(master) + this._sacnSection(master) + this._proModeSection(master) + this._mqttSection(master);
     if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
     return `
       <section class="card">
@@ -1172,6 +1177,41 @@ class NetroniPanel extends HTMLElement {
         ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
     }
     return `<h4>sACN</h4>${body}`;
+  }
+
+  _relaySection(master) {
+    const entry = master.entry_id;
+    const status = this._relay[entry];
+    let body;
+    if (!status) body = `<div class="empty small">Loading…</div>`;
+    else if (status.failed) body = this._banner("warn", "mdi:alert-outline", `Access from outside the home could not be read: ${esc(status.failed)}`);
+    else {
+      const lock = this._admin ? "" : "disabled";
+      const lines = [];
+      if (status.enabled) {
+        if (status.connected) {
+          lines.push("Reachable from outside the home.");
+          if (status.clients) lines.push(`${status.clients} app connection${status.clients === 1 ? "" : "s"} from outside right now.`);
+        } else {
+          lines.push(`Not connected${status.error ? `: ${esc(status.error)}` : ""}. The XP-Master keeps trying in the background; everything else works as usual.`);
+        }
+        if (status.paired === false) lines.push("No app is paired with this XP-Master yet: pair one at home first.");
+      }
+      body = `
+        <div class="set-row">
+          <div class="grow"><div>Access from outside the home</div><div class="sub">Lets the Netroni apps control this XP-Master from anywhere, through the Visiolite relay. Every app paired with it can use this. The connection stays encrypted from the app to the XP-Master: the relay can't read it.</div></div>
+          <label class="tw"><input type="checkbox" data-action="relay-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+        </div>
+        ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
+    }
+    return `<h4>Remote access</h4>${body}`;
+  }
+
+  async _setRelay(entry, enabled) {
+    try {
+      this._relay[entry] = await this._call({ type: "netroni/relay_set", entry_id: entry, enabled });
+    } catch {}
+    this._renderMain(); // also puts the switch back when the change was refused
   }
 
   /** One Pro Mode for Art-Net and sACN (kept with Art-Net's settings). */
