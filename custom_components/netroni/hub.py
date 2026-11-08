@@ -7,6 +7,7 @@ import random
 import time
 from collections.abc import Callable
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
@@ -255,6 +256,8 @@ class NetroniHub:
         elif event == "input_event":
             for listener in list(self._input_listeners.get((data.get("uid"), data.get("input")), set())):
                 listener(data.get("event", "pressed"))
+        elif event in ("remote_paired", "remote_outside"):
+            self._notify_remote(event, data)
         elif event == "port_identified":
             from .identify import async_notify_port_identified  # avoid an import cycle
 
@@ -262,6 +265,25 @@ class NetroniHub:
             listeners = self._identify_listeners.get(data.get("uid"), set()) | self._identify_listeners.get(ALL_MINIS, set())
             for listener in list(listeners):
                 listener(data)
+
+    @callback
+    def _notify_remote(self, event: str, data: dict) -> None:
+        """A new pairing, or a paired app's first connection from outside the home: told to the admins,
+        so one they don't expect is noticed (security review 2026-11-08)."""
+        master = self.master.get("name") or self.product
+        name = data.get("name") or "A client"
+        if event == "remote_paired":
+            title = f"Paired with {master}"
+            message = (f"**{name}** was paired with {master} and can now control it. If you don't know it, "
+                       "remove it in the Netroni panel → Remote Access.")
+        else:
+            title = f"{master} used from outside the home"
+            message = (f"**{name}** connected to {master} from outside the home for the first time, through the "
+                       "Visiolite relay. If you don't expect that, remove it in the Netroni panel → Remote Access, "
+                       "or turn off Access from outside the home in the panel's Settings.")
+        persistent_notification.async_create(
+            self.hass, message, title, f"{DOMAIN}_{event}_{self.master_id}_{data.get('client_id', '')}"
+        )
 
     @callback
     def async_add_identify_listener(
