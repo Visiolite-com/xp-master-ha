@@ -64,6 +64,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_artnet_set,
         ws_sacn_status,
         ws_sacn_set,
+        ws_circadian_status,
+        ws_circadian_set,
         ws_relay_status,
         ws_relay_set,
         ws_update_channel,
@@ -834,6 +836,48 @@ async def ws_sacn_set(hass: HomeAssistant, connection: websocket_api.ActiveConne
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/circadian_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_circadian_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The circadian settings, what it does now, and the places it can follow instead of home."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("circadian/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {**status, "home_name": hass.config.location_name})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/circadian_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("curve"): vol.In(["home", "office", "natural"]),
+        vol.Optional("warmest"): vol.All(int, vol.Range(min=1000, max=10000)),
+        vol.Optional("coolest"): vol.All(int, vol.Range(min=1000, max=10000)),
+        vol.Optional("warm_until"): str,
+        vol.Optional("place"): str,
+        vol.Optional("groups"): [str],
+        vol.Optional("lights"): [str],
+    }
+)
+@websocket_api.async_response
+async def ws_circadian_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Circadian's settings, in use at once; the new status. The home location and time zone are always
+    Home Assistant's own (Settings > System > General)."""
+    fields = {k: msg[k] for k in ("enabled", "curve", "warmest", "coolest", "warm_until", "place", "groups", "lights")
+              if k in msg}
+    fields.update(latitude=hass.config.latitude, longitude=hass.config.longitude, timezone=hass.config.time_zone)
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("circadian/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {**status, "home_name": hass.config.location_name})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "netroni/relay_status", vol.Required("entry_id"): str})

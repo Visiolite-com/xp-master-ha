@@ -56,7 +56,8 @@ const CCT_PRESETS = [
 ];
 const cctLabel = ([warm, cool]) => `${warm}–${cool} K`;
 
-// Closed cards on the Installation tab, remembered in this browser only ("master:<id>", "mini:<id>/<uid>").
+// Closed cards on the Installation tab, remembered in this browser only ("master:<id>", "mini:<id>/<uid>");
+// and the Settings tab's sections that are open ("open:<entry>/<section>": they start closed).
 const COLLAPSED_KEY = "netroni-collapsed";
 const loadCollapsed = () => {
   try {
@@ -85,6 +86,7 @@ class NetroniPanel extends HTMLElement {
     this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
     this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
+    this._circadian = {}; // entry_id -> netroni/circadian_status result, or {failed}
     this._relay = {}; // entry_id -> netroni/relay_status result, or {failed}
     this._dmxPct = false; // show values as % instead of 0-255
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
@@ -194,6 +196,7 @@ class NetroniPanel extends HTMLElement {
       if (this._tab === "matter") this._refreshMatter();
       if (this._tab === "remote") this._refreshRemote();
       if (this._tab !== "dmx") this._refreshDmx(); // is there DMX output to show a tab for?
+      this._loadCircadian();
     } else if (msg.kind === "identified") {
       this._onIdentified(msg);
     }
@@ -290,7 +293,7 @@ class NetroniPanel extends HTMLElement {
         this._setCollapsed(this._data.masters.map((m) => this._masterKey(m)), true);
         break;
       case "expand-all":
-        this._setCollapsed([...this._collapsed], false);
+        this._setCollapsed([...this._collapsed].filter((k) => !k.startsWith("open:")), false);
         break;
       case "more-info":
         if (d.entity) this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.entity }, bubbles: true, composed: true }));
@@ -348,7 +351,9 @@ class NetroniPanel extends HTMLElement {
       case "cct": {
         const mini = this._mini(d.entry, d.uid);
         const range = this._cctRange(this._master(d.entry), mini, Number(d.port));
-        this._openDialog({ kind: "cct", entry: d.entry, uid: d.uid, port: Number(d.port), warm: range[0], cool: range[1] });
+        const light = this._master(d.entry)?.lights.find((l) => l.mini_uid === d.uid && l.key === `port${d.port}t`);
+        this._openDialog({ kind: "cct", entry: d.entry, uid: d.uid, port: Number(d.port), warm: range[0], cool: range[1],
+          light: light?.id, follows: this._follows(d.entry, light?.id) });
         break;
       }
       case "goto-group":
@@ -467,6 +472,20 @@ class NetroniPanel extends HTMLElement {
       case "mqtt-save":
         this._saveMqtt(d.entry);
         break;
+      case "circadian-save":
+        this._saveCircadian(d.entry);
+        break;
+      case "circadian-suggest": {
+        // Into the fields only: Save keeps it, as with a range typed in.
+        const set = (name, value) => {
+          const input = this.shadowRoot.getElementById(`circadian-${name}-${d.entry}`);
+          if (input) input.value = value;
+        };
+        set("warmest", d.warm);
+        set("coolest", d.cool);
+        this._toast("Range filled in: Save to use it");
+        break;
+      }
       case "mqtt-clear-password":
         this._setMqtt(d.entry, { password: "" }).then((ok) => ok && this._toast("MQTT password removed"));
         break;
@@ -601,6 +620,10 @@ class NetroniPanel extends HTMLElement {
       this._setRelay(el.dataset.entry, el.checked);
       return;
     }
+    if (el.dataset?.action === "circadian-enabled") {
+      this._setCircadian(el.dataset.entry, { enabled: el.checked });
+      return;
+    }
     if (el.dataset?.action === "sacn-enabled") {
       this._setSacn(el.dataset.entry, { enabled: el.checked });
       return;
@@ -730,7 +753,22 @@ class NetroniPanel extends HTMLElement {
       this._toast("Warm must be at least 100 K below cool, both between 1000 and 10000 K");
       return;
     }
-    await this._run(() => this._call({ type: "netroni/set_cct_range", entry_id: entry, uid, port, warm, cool }));
+    const follow = this.shadowRoot.getElementById("cct-circadian");
+    const { light, follows } = this._dialog;
+    await this._run(async () => {
+      await this._call({ type: "netroni/set_cct_range", entry_id: entry, uid, port, warm, cool });
+      if (follow && follow.checked !== follows) {
+        const st = this._circadian[entry];
+        const lights = new Set(st.lights || []);
+        if (follow.checked) lights.add(light);
+        else lights.delete(light);
+        // A light that followed with its group, switched off here: its group no longer follows.
+        const master = this._master(entry);
+        const groups = (st.groups || []).filter((id) => follow.checked || !master?.groups.find((g) => g.id === id)?.members.includes(light));
+        this._circadian[entry] = { places: st.places,
+          ...(await this._call({ type: "netroni/circadian_set", entry_id: entry, lights: [...lights], groups })) };
+      }
+    });
   }
 
   async _setPairs() {
@@ -931,7 +969,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._relay, "netroni/relay_status"], [this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"]]) {
+      for (const [store, type] of [[this._relay, "netroni/relay_status"], [this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._circadian, "netroni/circadian_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -944,8 +982,8 @@ class NetroniPanel extends HTMLElement {
         store[master.entry_id] = status;
       }
     }
-    // Not while an MQTT field is being typed in: drawing again would lose it.
-    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form");
+    // Not while an MQTT or circadian field is being typed in: drawing again would lose it.
+    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form, .circadian-form");
     if (changed && this._tab === "settings" && !typing) this._renderMain();
   }
 
@@ -1094,7 +1132,15 @@ class NetroniPanel extends HTMLElement {
           </div>`)
         .join("")}`;
     }
-    if (xpMaster) html += this._relaySection(master) + this._artnetSection(master) + this._sacnSection(master) + this._proModeSection(master) + this._mqttSection(master);
+    if (xpMaster) {
+      html += this._fold(entry, "circadian", "mdi:weather-sunset", "Circadian lighting", this._circadianSummary(entry),
+        () => this._circadianSection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
+      html += this._fold(entry, "remote", "mdi:earth", "Remote access", this._relaySummary(entry),
+        () => this._relaySection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
+      html += this._fold(entry, "protocols", "mdi:lan", "Network protocols", this._protocolsSummary(entry),
+        () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master)]
+          .filter(Boolean).map((part) => `<div class="sub-card">${part}</div>`).join(""));
+    }
     if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
     return `
       <section class="card">
@@ -1104,6 +1150,53 @@ class NetroniPanel extends HTMLElement {
         </div>
         ${html}
       </section>`;
+  }
+
+  /** A Settings section that opens and closes; closed (the start) it shows only its summary line. */
+  _fold(entry, name, icon, title, summary, body) {
+    const key = `open:${entry}/${name}`;
+    const open = this._collapsed.has(key);
+    return `
+      <div class="settings-fold ${open ? "open" : ""}">
+        <div class="fold-head fold" data-action="collapse" data-key="${esc(key)}" role="button" aria-expanded="${open}">
+          <ha-icon class="fold-chevron" icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon>
+          <ha-icon class="fold-icon" icon="${icon}"></ha-icon>
+          <div class="grow"><div class="fold-title">${title}</div>${summary ? `<div class="sub">${summary}</div>` : ""}</div>
+        </div>
+        ${open ? `<div class="fold-body">${body()}</div>` : ""}
+      </div>`;
+  }
+
+  _circadianSummary(entry) {
+    const st = this._circadian[entry];
+    if (!st) return "";
+    if (st.failed) return "Could not be read";
+    if (!st.enabled) return "Off";
+    if (st.error) return `On · not running: ${esc(st.error)}`;
+    const where = st.place_name ? ` · sun of ${esc(st.place_name)}` : "";
+    return `On · ${st.kelvin ? `${st.kelvin} K now` : "starting"} · ${st.following} light${st.following === 1 ? "" : "s"}${where}`;
+  }
+
+  _relaySummary(entry) {
+    const st = this._relay[entry];
+    if (!st) return "";
+    if (st.failed) return "Could not be read";
+    if (!st.enabled) return "Off";
+    if (st.paired === false) return "On · pair an app at home first";
+    return st.connected ? "On · reachable from outside the home" : "On · not reachable right now";
+  }
+
+  _protocolsSummary(entry) {
+    const art = this._artnet[entry];
+    const sacn = this._sacn[entry];
+    const mqtt = this._mqtt[entry];
+    const part = (name, st, on) => (!st ? "" : st.failed ? `${name} ?` : st.enabled ? `${name} ${on(st)}` : `${name} off`);
+    return [
+      part("Art-Net", art, (st) => `on (universe ${esc(st.port_address)})`),
+      part("sACN", sacn, (st) => `on (universe ${esc(st.universe)})`),
+      art && !art.failed && art.pro_mode ? "Pro Mode" : "",
+      part("MQTT", mqtt, (st) => (st.connected ? "connected" : "not connected")),
+    ].filter(Boolean).join(" · ");
   }
 
   _artnetSection(master) {
@@ -1177,6 +1270,125 @@ class NetroniPanel extends HTMLElement {
         ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
     }
     return `<h4>sACN</h4>${body}`;
+  }
+
+  /** Circadian status of each XP-Master not read yet (the Settings tab keeps it fresh). */
+  async _loadCircadian() {
+    let changed = false;
+    for (const master of this._xpMasters) {
+      if (this._circadian[master.entry_id]) continue;
+      try {
+        this._circadian[master.entry_id] = await this._hass.callWS({ type: "netroni/circadian_status", entry_id: master.entry_id });
+      } catch (err) {
+        this._circadian[master.entry_id] = { failed: err.message || String(err) };
+      }
+      changed = true;
+    }
+    if (changed && !this._dialog) this._renderMain();
+  }
+
+  /** Whether this light follows circadian: true / false, or null when it can't (no circadian here). */
+  _follows(entry, lightId) {
+    const st = this._circadian[entry];
+    if (!st || st.failed || !lightId) return null;
+    const master = this._master(entry);
+    const inGroup = (master?.groups || []).some((g) => (st.groups || []).includes(g.id) && g.members.includes(lightId));
+    return (st.lights || []).includes(lightId) || inGroup;
+  }
+
+  async _setCircadian(entry, fields) {
+    try {
+      const places = this._circadian[entry]?.places; // only circadian/get has them
+      this._circadian[entry] = { places, ...(await this._call({ type: "netroni/circadian_set", entry_id: entry, ...fields })) };
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._renderMain(); // also puts a switch back when the change was refused
+    }
+  }
+
+  async _saveCircadian(entry) {
+    const value = (name) => this.shadowRoot.getElementById(`circadian-${name}-${entry}`)?.value ?? "";
+    const warmest = Number(value("warmest"));
+    const coolest = Number(value("coolest"));
+    if (!Number.isInteger(warmest) || !Number.isInteger(coolest) || warmest < 1000 || coolest > 10000 || warmest >= coolest) {
+      this._toast("Warmest and coolest: whole numbers in kelvin, 1000–10000, warmest below coolest");
+      return;
+    }
+    const fields = { curve: value("curve"), warmest, coolest, warm_until: value("until"), place: value("place") };
+    if (await this._setCircadian(entry, fields)) this._toast("Circadian settings saved");
+  }
+
+  _circadianSection(master) {
+    const entry = master.entry_id;
+    const status = this._circadian[entry];
+    if (!status) return `<h4>Circadian lighting</h4><div class="empty small">Loading…</div>`;
+    if (status.failed) return `<h4>Circadian lighting</h4>${this._banner("warn", "mdi:alert-outline", `Circadian settings could not be read: ${esc(status.failed)}`)}`;
+    const lock = this._admin ? "" : "disabled";
+    const lightName = (id) => {
+      const light = master.lights.find((l) => l.id === id);
+      return light ? light.name || light.default_name : id;
+    };
+    let line = "";
+    if (status.enabled) {
+      if (status.error) line = `Not running: ${esc(status.error)}.`;
+      else if (status.kelvin) {
+        const where = status.place_name ? ` in ${esc(status.place_name)}` : "";
+        line = `Now <b>${status.kelvin} K</b>. Sunrise${where} ${esc(status.sunrise || "–")}, sunset ${esc(status.sunset || "after midnight")}.`;
+        if (!status.following) line += " No light follows yet.";
+        if (status.paused?.length) line += ` Set by hand, paused until switched off: ${status.paused.map((id) => esc(lightName(id))).join(", ")}.`;
+      }
+    }
+    const option = (value, label, current) => `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
+    const curves = [["home", "Home: slow mornings, warm evenings"], ["office", "Office: cooler working light"], ["natural", "Natural: the real sun"]];
+    const places = [["", `Home location${status.home_name ? ` (${status.home_name})` : ""}`], ...(status.places || []).map((p) => [p.key, p.name])];
+    const following = master.lights.filter((l) => l.kind === "tunable_white" && this._follows(entry, l.id)).map((l) => l.id);
+    // Each light keeps the curve's value inside its own range: say where one can't follow it all the way.
+    const ranges = following.map((id) => master.lights.find((l) => l.id === id))
+      .filter((l) => l.min_kelvin && l.max_kelvin);
+    const limits = ranges.flatMap((l) => {
+      const parts = [];
+      if (l.min_kelvin > status.warmest) parts.push(`at night it stays at ${l.min_kelvin} K`);
+      if (l.max_kelvin < status.coolest) parts.push(`by day it goes no higher than ${l.max_kelvin} K`);
+      return parts.length ? [`${esc(lightName(l.id))} (${l.min_kelvin}–${l.max_kelvin} K): ${parts.join(", ")}.`] : [];
+    });
+    // A range they can all show: the warmest they share, and their shared coolest (Home: at most 4000 K).
+    let suggest = "";
+    if (ranges.length) {
+      const warm = Math.max(...ranges.map((l) => l.min_kelvin));
+      const shared = Math.min(...ranges.map((l) => l.max_kelvin));
+      const cool = status.curve === "home" ? Math.min(shared, 4000) : shared;
+      if (warm >= cool) suggest = "These lights share no colour range: each follows within its own.";
+      else if (warm !== status.warmest || cool !== status.coolest) {
+        suggest = `Suggested for these lights: ${warm}–${cool} K${status.curve === "home" && shared > 4000 ? " (they reach " + shared + " K; Home stays at 4000 K or below)" : ""}.
+          ${this._admin ? `<button class="link" data-action="circadian-suggest" data-entry="${entry}" data-warm="${warm}" data-cool="${cool}">Use it</button>` : ""}`;
+      }
+    }
+    return `
+      <h4>Circadian lighting</h4>
+      <div class="set-row">
+        <div class="grow"><div>Circadian lighting</div><div class="sub">Changes the colour temperature of the chosen lights through the day, following the sun: cooler by day, warmer in the evening. Only the colour temperature: switching and brightness stay as they are. A colour temperature set by hand pauses a light until it is switched off.</div></div>
+        <label class="tw"><input type="checkbox" data-action="circadian-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+      </div>
+      ${line ? `<div class="sub pad">${line}</div>` : ""}
+      <div class="circadian-form">
+        <div class="field-row">
+          <label class="field"><span>Curve</span><select id="circadian-curve-${entry}" ${lock}>${curves.map(([v, l]) => option(v, l, status.curve)).join("")}</select></label>
+          <label class="field"><span>Follow the sun of</span><select id="circadian-place-${entry}" ${lock}>${places.map(([v, l]) => option(v, l, status.place)).join("")}</select></label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>Warmest, at night (K)</span><input id="circadian-warmest-${entry}" type="number" step="10" value="${esc(status.warmest)}" ${lock}></label>
+          <label class="field"><span>Coolest, by day (K)</span><input id="circadian-coolest-${entry}" type="number" step="10" value="${esc(status.coolest)}" ${lock}></label>
+          <label class="field"><span>Warm until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock}></label>
+        </div>
+        ${suggest ? `<div class="sub pad">${suggest}</div>` : ""}
+        ${this._admin ? `<div class="actions left"><button class="btn" data-action="circadian-save" data-entry="${entry}">Save</button></div>` : ""}
+      </div>
+      <div class="set-row"><div class="grow"><div>Which lights follow</div><div class="sub">${
+        following.length ? `${following.map((id) => esc(lightName(id))).join(", ")}.` : "None yet."}
+        Choose per port in Installation: a tunable white port's colour range → <i>Follow circadian lighting</i>.</div>
+        ${limits.length ? `<div class="sub warn-text">${limits.join(" ")}</div>` : ""}</div></div>`;
   }
 
   _relaySection(master) {
@@ -1707,7 +1919,9 @@ class NetroniPanel extends HTMLElement {
   _rangeChip(master, mini, port, data) {
     const range = this._cctRange(master, mini, port);
     const custom = range[0] !== CCT_DEFAULT[0] || range[1] !== CCT_DEFAULT[1];
-    const label = cctLabel(range);
+    const light = master.lights.find((l) => l.mini_uid === mini.uid && l.key === `port${port}t`);
+    const label = cctLabel(range) + (this._follows(master.entry_id, light?.id)
+      ? ` <ha-icon class="chip-sun" icon="mdi:weather-sunset" title="Follows circadian lighting"></ha-icon>` : "");
     return this._admin
       ? `<button class="range ${custom ? "custom" : ""}" data-action="cct" ${data} title="Colour range of the strip on Port ${port}">${label}</button>`
       : `<span class="range ${custom ? "custom" : ""}" title="Colour range of the strip on Port ${port}">${label}</span>`;
@@ -2327,6 +2541,15 @@ class NetroniPanel extends HTMLElement {
         <div class="cct-bar" id="cct-bar" style="background: ${this._cctGradient(d.warm, d.cool)}"></div>
         <div class="cct-labels" id="cct-labels">${this._cctLabels(d.warm, d.cool)}</div>
         <p class="sub">Home Assistant, Matter and the XP-Mini use this range for this light. A colour temperature outside the new range moves to its nearest end.</p>`;
+      if (d.follows !== null && d.follows !== undefined) {
+        const st = this._circadian[d.entry];
+        body += `
+        <div class="set-row">
+          <div class="grow"><div>Follow circadian lighting</div><div class="sub">The XP-Master changes its colour temperature through the day.
+            ${st.enabled ? "" : "Circadian lighting is off: turn it on in Settings."}</div></div>
+          <label class="tw"><input type="checkbox" id="cct-circadian" ${d.follows ? "checked" : ""} ${this._busy ? "disabled" : ""}><span class="switch"></span></label>
+        </div>`;
+      }
       action = `<button class="btn" data-action="save-cct" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "pairs") {
       const mini = this._mini(d.entry, d.uid);
@@ -2490,7 +2713,12 @@ const STYLE = `
   .set-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
   .set-row:first-of-type { border-top: 0; }
   .set-value { font-size: 15px; font-weight: 500; }
-  .mqtt-form { margin-top: 4px; }
+  .mqtt-form, .circadian-form { margin-top: 4px; }
+  .circadian-form .field-row { flex-wrap: wrap; }
+  .circadian-form .field { min-width: 180px; }
+  .circadian-form .actions { margin: 16px 0 14px; }
+  .circadian-form .link { font: inherit; color: var(--primary-color); background: none; border: 0; padding: 0 0 0 4px; cursor: pointer; }
+  .chip-sun { --mdc-icon-size: 15px; vertical-align: -2px; color: var(--warning-color, #f0a400); }
   .mqtt-form .field-row { flex-wrap: wrap; }
   .mqtt-form .field { min-width: 220px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; flex: none; }
@@ -2630,6 +2858,17 @@ const STYLE = `
   .dmx-check { margin-top: 6px; min-height: 1.4em; }
   .bad-text { color: var(--bad); }
   .chevron { margin: 0 -8px 0 -8px; }
+  .settings-fold { border-top: 1px solid var(--line); margin-top: 8px; }
+  .fold-head { display: flex; align-items: center; gap: 10px; padding: 14px 0; }
+  .fold-head:hover .fold-title { color: var(--primary-color); }
+  .fold-chevron { --mdc-icon-size: 22px; color: var(--secondary-text-color); margin-left: -4px; }
+  .fold-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); }
+  .fold-title { font-size: 16px; font-weight: 500; }
+  .fold-body { padding: 0 0 8px 32px; }
+  .sub-card { border: 1px solid var(--line); border-radius: 12px; padding: 2px 16px 6px; margin: 0 0 12px;
+    background: rgba(127, 127, 127, .05); }
+  .sub-card h4 { font-size: 16px; margin: 12px 0 2px; }
+  .sub-card h4 + .set-row, .sub-card h4 + div > .set-row:first-child { border-top: 0; }
   .fold { cursor: pointer; user-select: none; }
   .summary { margin-top: 12px; }
   .summary b { color: var(--primary-text-color); font-weight: 500; }
