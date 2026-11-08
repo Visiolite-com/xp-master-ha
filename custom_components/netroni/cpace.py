@@ -1,7 +1,11 @@
 """Pairing by code without sending the code: CPace (draft-irtf-cfrg-cpace-21) with ristretto255 (RFC 9496)
 and SHA-512, the cipher suite CPACE-RISTR255-SHA512, initiator-responder, with key confirmation as in the
-draft's section 10.4. Pure Python: PyNaCl has no ristretto255; the apps use libsodium's, and all of them
-are checked against the same test vectors (tests/test_cpace.py). docs/pairing.md.
+draft's section 10.4. docs/pairing.md.
+
+The group operations run in libsodium (C, constant-time, as in the apps) wherever it is installed: the
+XP-Master's image has it (its tests insist). Elsewhere, as in Home Assistant (whose PyNaCl doesn't
+expose ristretto255), the pure-Python implementation below does them. Both are checked against the same
+test vectors (tests/test_cpace.py).
 
 The same file is in the Home Assistant integration (xp-master-ha custom_components/netroni/cpace.py):
 keep the two identical.
@@ -11,11 +15,13 @@ CI binds the run to the TLS connection: it holds the SHA-256 of the server certi
 sees it, so a man in the middle with a certificate of his own gives the two sides different keys and
 the key confirmation fails, without the code crossing the network. One run is one guess.
 
-Not constant-time (Python integers): every scalar is fresh for one run and thrown away, and a run is
-one guess at a code that changes with every pairing window.
+The Python path is not constant-time (Python integers): every scalar is fresh for one run and thrown
+away, and a run is one guess at a code that changes with every pairing window.
 """
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import hashlib
 import hmac
 import secrets
@@ -149,6 +155,53 @@ def scalar_mult(scalar: int, point: tuple[int, int, int, int]) -> tuple[int, int
     return result
 
 
+# --- libsodium, when there is one ----------------------------------------------------------------
+
+
+def _load_sodium():
+    """libsodium with its ristretto255 functions, initialised; None if there is none."""
+    for name in (ctypes.util.find_library("sodium"), "libsodium.so.23", "libsodium.so.26", "libsodium.dylib"):
+        if not name:
+            continue
+        try:
+            lib = ctypes.CDLL(name)
+            lib.crypto_core_ristretto255_from_hash  # noqa: B018 - a library too old to have it: not this one
+            lib.crypto_scalarmult_ristretto255  # noqa: B018
+        except (OSError, AttributeError):
+            continue
+        if lib.sodium_init() < 0:
+            continue
+        return lib
+    return None
+
+
+_sodium = _load_sodium()
+BACKEND = "libsodium" if _sodium is not None else "python"
+
+
+def generator(hash64: bytes, backend: str = BACKEND) -> bytes:
+    """The encoded element derived from a 64-byte hash (RFC 9496, 4.3.4)."""
+    if backend == "libsodium":
+        out = ctypes.create_string_buffer(32)
+        _sodium.crypto_core_ristretto255_from_hash(out, hash64)
+        return out.raw
+    return encode(element_derivation(hash64))
+
+
+def multiply(y: int, encoded: bytes, backend: str = BACKEND) -> bytes:
+    """y times an encoded element, encoded; the encoded identity when it doesn't decode or the result is
+    the identity (then the caller must abort): CPace's scalar_mult_vfy, and scalar_mult too."""
+    if backend == "libsodium":
+        if len(encoded) != 32:
+            return ENCODED_IDENTITY
+        out = ctypes.create_string_buffer(32)
+        # It clears bit 255 of the scalar and nothing else: ours are below 2^252, used as they are.
+        if _sodium.crypto_scalarmult_ristretto255(out, y.to_bytes(32, "little"), encoded) != 0:
+            return ENCODED_IDENTITY
+        return out.raw
+    return scalar_mult_vfy(y, encoded)
+
+
 # --- CPace (draft-irtf-cfrg-cpace-21) ----------------------------------------------------------
 
 DSI = b"CPaceRistretto255"
@@ -175,8 +228,9 @@ def generator_string(dsi: bytes, prs: bytes, ci: bytes, sid: bytes, s_in_bytes: 
     return lv_cat(dsi, prs, bytes(len_zpad), ci, sid)
 
 
-def calculate_generator(prs: bytes, ci: bytes, sid: bytes) -> tuple[int, int, int, int]:
-    return element_derivation(hashlib.sha512(generator_string(DSI, prs, ci, sid)).digest())
+def calculate_generator(prs: bytes, ci: bytes, sid: bytes, backend: str = BACKEND) -> bytes:
+    """The generator, encoded."""
+    return generator(hashlib.sha512(generator_string(DSI, prs, ci, sid)).digest(), backend)
 
 
 def sample_scalar() -> int:
@@ -228,18 +282,20 @@ class CPaceError(Exception):
 class Initiator:
     """The client's side: start(), then finish() with the server's reply."""
 
-    def __init__(self, code: str, fingerprint: bytes, ada: bytes, sid: bytes | None = None, y: int | None = None) -> None:
+    def __init__(self, code: str, fingerprint: bytes, ada: bytes, sid: bytes | None = None, y: int | None = None,
+                 backend: str = BACKEND) -> None:
         self.sid = sid if sid is not None else secrets.token_bytes(16)
         self.ci = channel(fingerprint)
         self.prs = code.encode()
         self.ada = ada
+        self.backend = backend
         self._y = y if y is not None else sample_scalar()
-        self.share = encode(scalar_mult(self._y, calculate_generator(self.prs, self.ci, self.sid)))
+        self.share = multiply(self._y, calculate_generator(self.prs, self.ci, self.sid, backend), backend)
 
     def finish(self, yb: bytes, adb: bytes, server_tag: bytes) -> bytes:
         """The server's share and tag: our tag to send. Raises CPaceError if the server's tag is wrong
         (wrong code, or the certificate isn't the one the server has)."""
-        k = scalar_mult_vfy(self._y, yb)
+        k = multiply(self._y, yb, self.backend)
         self._y = 0
         if k == ENCODED_IDENTITY:
             raise CPaceError("invalid share from the server")
@@ -253,14 +309,14 @@ class Responder:
     """The server's side: the client's share in, our share and tag out; then check the client's tag."""
 
     def __init__(self, code: str, fingerprint: bytes, sid: bytes, ya: bytes, ada: bytes, adb: bytes,
-                 y: int | None = None) -> None:
+                 y: int | None = None, backend: str = BACKEND) -> None:
         if not 8 <= len(sid) <= 64:
             raise CPaceError("sid must be 8 to 64 bytes")
         ci = channel(fingerprint)
         yb_scalar = y if y is not None else sample_scalar()
-        self.share = encode(scalar_mult(yb_scalar, calculate_generator(code.encode(), ci, sid)))
+        self.share = multiply(yb_scalar, calculate_generator(code.encode(), ci, sid, backend), backend)
         self.adb = adb
-        k = scalar_mult_vfy(yb_scalar, ya)
+        k = multiply(yb_scalar, ya, backend)
         if k == ENCODED_IDENTITY:
             raise CPaceError("invalid share from the client")
         key = mac_key(sid, isk(sid, k, ya, ada, self.share, adb))
