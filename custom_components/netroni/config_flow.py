@@ -28,7 +28,7 @@ from .client import (
     async_pair,
     async_read_token,
 )
-from .const import CONF_FINGERPRINT, CONF_TOKEN, DEFAULT_PORT, DOMAIN, REMOTE_PORT
+from .const import CONF_FINGERPRINT, CONF_NEXT_FINGERPRINT, CONF_TOKEN, DEFAULT_PORT, DOMAIN, REMOTE_PORT
 
 LOCALHOST = "127.0.0.1"  # Home Assistant and the Netroni service share the host network
 
@@ -146,6 +146,7 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
         data = {
             CONF_HOST: self._host, CONF_PORT: self._port,
             CONF_FINGERPRINT: self._fingerprint, CONF_TOKEN: reply["token"],
+            CONF_NEXT_FINGERPRINT: None,  # a renewal the old pairing was in is over
         }
         await self.async_set_unique_id(reply["master_id"])
         if self.source == SOURCE_REAUTH:

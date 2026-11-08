@@ -12,8 +12,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, issue_registry as ir
 
-from .client import AuthFailed, CannotConnect, CommandError, async_entry_token, client_for_entry
-from .const import API_VERSION, DOMAIN, PORTS_PER_MINI
+from .client import AuthFailed, CannotConnect, CommandError, _hex, async_entry_token, client_for_entry
+from .const import API_VERSION, CONF_FINGERPRINT, CONF_NEXT_FINGERPRINT, DOMAIN, PORTS_PER_MINI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ class NetroniHub:
             group_states = await self._group_states()
             update_status = await self._update_status()
             await self.client.call("subscribe")
+            await self._take_keys(hello.get("key_rotation"))
         except (CannotConnect, CommandError):
             await self.client.close()
             raise
@@ -211,8 +212,42 @@ class NetroniHub:
     # --- events from the Master -------------------------------------------
 
     @callback
+    async def _take_keys(self, rotation: dict | None) -> None:
+        """Remote access: the XP-Master's keys being renewed (docs/key-rotation.md in xp-master). The
+        next certificate is kept as a second pin and confirmed; met once, it becomes the only one."""
+        data = self.entry.data
+        if not data.get(CONF_FINGERPRINT):
+            return  # the local API: nothing pinned
+        current, nxt = data[CONF_FINGERPRINT], data.get(CONF_NEXT_FINGERPRINT)
+        served = self.client.served_fingerprint
+        if nxt and served == _hex(nxt):  # switched: the next one is now the certificate
+            current, nxt = nxt, None
+            _LOGGER.info("%s: its renewed certificate is now the one pinned", self.entry.title)
+        if rotation is not None and rotation.get("fingerprint"):
+            nxt = rotation["fingerprint"]
+        elif nxt and served == _hex(current):  # nothing under way any more, and not switched: dropped
+            nxt = None
+        if (current, nxt) != (data[CONF_FINGERPRINT], data.get(CONF_NEXT_FINGERPRINT)):
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**data, CONF_FINGERPRINT: current, CONF_NEXT_FINGERPRINT: nxt})
+            self.client.set_fingerprints(current, nxt)
+        if rotation is not None and nxt:  # kept: now say so (again on each connection: harmless)
+            await self.client.call("remote/confirm_keys", fingerprint=rotation["fingerprint"])
+
+    async def _take_keys_quietly(self, rotation: dict | None) -> None:
+        """A change starting (the event). Its end (None) changes nothing here: this connection is still
+        on the old certificate; the next one meets the new (hello's _take_keys)."""
+        if rotation is None:
+            return
+        try:
+            await self._take_keys(rotation)
+        except (CannotConnect, CommandError) as err:  # the next connection's hello tries again
+            _LOGGER.warning("%s: could not take its renewed keys yet: %s", self.entry.title, err)
+
     def _on_event(self, event: str, data: dict) -> None:
-        if event == "state_changed":
+        if event == "key_rotation":
+            self.entry.async_create_background_task(self.hass, self._take_keys_quietly(data), "netroni keys")
+        elif event == "state_changed":
             self.states[data["light_id"]] = data["state"]
             self._notify()
         elif event == "group_changed":

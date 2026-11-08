@@ -461,6 +461,21 @@ class NetroniPanel extends HTMLElement {
       case "remote-cancel":
         this._remoteCall(d.entry, "netroni/remote_close_pairing");
         break;
+      case "remote-rotate":
+        if (confirm("Renew the keys? Every paired Home Assistant and app takes the new keys the next time it connects. One that doesn't connect within 90 days has to be paired again.")) {
+          this._remoteCall(d.entry, "netroni/remote_rotate_keys");
+        }
+        break;
+      case "remote-switch": {
+        const status = this._remote[d.entry] || {};
+        const confirmed = (status.key_rotation && status.key_rotation.confirmed) || [];
+        const missing = (status.clients || []).filter((c) => !confirmed.includes(c.id)).map((c) => c.name);
+        const who = missing.length ? ` ${missing.join(", ")} ${missing.length === 1 ? "doesn't" : "don't"} have them yet and will have to be paired again.` : "";
+        if (confirm(`Switch to the new keys now?${who}`)) {
+          this._remoteCall(d.entry, "netroni/remote_switch_keys");
+        }
+        break;
+      }
       case "remote-revoke":
         if (confirm(`Remove ${d.name}? It can no longer control this XP-Master until it is paired again.`)) {
           this._remoteCall(d.entry, "netroni/remote_revoke", { client_id: d.client });
@@ -2287,9 +2302,12 @@ class NetroniPanel extends HTMLElement {
   _remoteBody(master, status) {
     const entry = master.entry_id;
     const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "never");
+    const renewing = status.key_rotation; // the keys are being renewed (docs/key-rotation.md in xp-master)
+    const hasNew = (c) => renewing && (renewing.confirmed || []).includes(c.id);
+    const keys = (c) => (renewing ? ` · ${hasNew(c) ? "has the new keys" : "doesn't have the new keys yet"}` : "");
     const clients = (status.clients || []).map(
       (c) => `<div class="app"><ha-icon icon="mdi:home-assistant"></ha-icon>
-        <div class="grow"><div>${esc(c.name)}</div><div class="sub">Paired ${esc(when(c.created))} · last seen ${esc(when(c.last_seen))}</div></div>
+        <div class="grow"><div>${esc(c.name)}</div><div class="sub">Paired ${esc(when(c.created))} · last seen ${esc(when(c.last_seen))}${esc(keys(c))}</div></div>
         ${this._admin ? `<button class="btn secondary" data-action="remote-revoke" data-entry="${entry}" data-client="${esc(c.id)}" data-name="${esc(c.name)}" ${status.busy ? "disabled" : ""}>Remove</button>` : ""}</div>`
     );
     let html = `<h4>Paired Home Assistants and apps</h4>${clients.length ? `<div class="apps">${clients.join("")}</div>` : `<div class="sub pad">None yet.</div>`}`;
@@ -2316,8 +2334,26 @@ class NetroniPanel extends HTMLElement {
     } else {
       html += `<div class="sub pad">An administrator can pair a Home Assistant or app.</div>`;
     }
+    html += this._remoteKeys(entry, status);
     html += `<p class="sub pad">The XP-Master only accepts remote connections while a Home Assistant or app is paired or a pairing window is open. The connection is encrypted; each has its own key and can be removed here.</p>`;
     return html;
+  }
+
+  // Renewing the keys that protect remote connections: the paired ones take them, no pairing again.
+  _remoteKeys(entry, status) {
+    const renewing = status.key_rotation;
+    const busy = status.busy ? "disabled" : "";
+    if (!renewing) {
+      return `<h4>Keys</h4>
+        <p class="sub pad">The keys that protect remote connections are renewed by the XP-Master before they run out. The paired Home Assistants and apps take the new ones by themselves.</p>
+        ${this._admin ? `<div class="actions"><button class="btn secondary" data-action="remote-rotate" data-entry="${entry}" ${busy}>Renew keys</button></div>` : ""}`;
+    }
+    const clients = status.clients || [];
+    const done = clients.filter((c) => (renewing.confirmed || []).includes(c.id)).length;
+    const by = new Date(renewing.switch_after * 1000).toLocaleDateString();
+    return `<h4>Keys</h4>
+      <p class="sub pad">Renewing the keys: ${done} of ${clients.length} have the new ones. The XP-Master switches to them once all have, or on ${esc(by)} at the latest. One that doesn't have them by then has to be paired again.</p>
+      ${this._admin ? `<div class="actions"><button class="btn secondary" data-action="remote-switch" data-entry="${entry}" ${busy}>Switch now</button></div>` : ""}`;
   }
 
   _matterCard(master) {

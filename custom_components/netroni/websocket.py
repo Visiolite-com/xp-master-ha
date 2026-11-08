@@ -54,6 +54,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_remote_open_pairing,
         ws_remote_close_pairing,
         ws_remote_revoke,
+        ws_remote_rotate_keys,
+        ws_remote_switch_keys,
         ws_scene_capture,
         ws_scene_save,
         ws_set_transitions,
@@ -1013,3 +1015,19 @@ async def ws_remote_close_pairing(hass: HomeAssistant, connection: websocket_api
 @websocket_api.async_response
 async def ws_remote_revoke(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
     await _remote_call(hass, connection, msg, "remote/revoke", client_id=msg["client_id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/remote_rotate_keys", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_remote_rotate_keys(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Renew the remote access keys (docs/key-rotation.md in xp-master): the paired clients take them."""
+    await _remote_call(hass, connection, msg, "remote/rotate_keys")
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/remote_switch_keys", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_remote_switch_keys(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Switch to the renewed keys now: who hasn't taken them pairs again."""
+    await _remote_call(hass, connection, msg, "remote/switch_keys")

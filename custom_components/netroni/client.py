@@ -24,6 +24,11 @@ def _pinned(fingerprint: str) -> aiohttp.Fingerprint:
     return aiohttp.Fingerprint(bytes.fromhex(fingerprint.replace(":", "")))
 
 
+def _hex(fingerprint: str) -> str:
+    """"AB:CD:…" or "abcd…": lower-case hex, as compared."""
+    return fingerprint.replace(":", "").lower()
+
+
 async def async_entry_token(hass, data: dict) -> str | None:
     """A remote XP-Master: the token from the pairing; this machine's: the token file."""
     from .const import CONF_TOKEN
@@ -34,10 +39,11 @@ async def async_entry_token(hass, data: dict) -> str | None:
 def client_for_entry(hass, data: dict, **kwargs) -> NetroniClient:
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-    from .const import CONF_FINGERPRINT
+    from .const import CONF_FINGERPRINT, CONF_NEXT_FINGERPRINT
 
     return NetroniClient(
-        async_get_clientsession(hass), data["host"], data["port"], fingerprint=data.get(CONF_FINGERPRINT), **kwargs
+        async_get_clientsession(hass), data["host"], data["port"], fingerprint=data.get(CONF_FINGERPRINT),
+        next_fingerprint=data.get(CONF_NEXT_FINGERPRINT), **kwargs
     )
 
 
@@ -178,10 +184,13 @@ class NetroniClient:
         on_disconnect: Callable[[], None] | None = None,
         token: str | None = None,
         fingerprint: str | None = None,
+        next_fingerprint: str | None = None,
     ) -> None:
-        # Remote access: TLS, with the XP-Master's certificate pinned by its SHA-256 fingerprint.
-        self._ssl = _pinned(fingerprint) if fingerprint else None
+        # Remote access: TLS, with the XP-Master's certificate pinned by its SHA-256 fingerprint; while
+        # its keys are renewed (docs/key-rotation.md), the next one is accepted too.
         self.url = f"{'wss' if fingerprint else 'ws'}://{host}:{port}{WS_PATH}"
+        self.set_fingerprints(fingerprint, next_fingerprint)
+        self.served_fingerprint: str | None = None  # the one this connection met (hex), with TLS
         self.token = token  # sent first on every connection (the service refuses clients without it)
         self._session = session
         self._on_event = on_event
@@ -192,6 +201,16 @@ class NetroniClient:
         self._pending: dict[int, asyncio.Future[dict]] = {}
         self._closing = False
 
+    def set_fingerprints(self, fingerprint: str | None, next_fingerprint: str | None = None) -> None:
+        """The certificates accepted from the next connection on: one, or the current and the next."""
+        self._fingerprints = [_hex(f) for f in (fingerprint, next_fingerprint) if f]
+        if not self._fingerprints:
+            self._ssl = None
+        elif len(self._fingerprints) == 1:
+            self._ssl = _pinned(self._fingerprints[0])
+        else:  # aiohttp pins one: the certificate is checked here, before anything is sent but the upgrade
+            self._ssl = False
+
     @property
     def connected(self) -> bool:
         return self._ws is not None and not self._ws.closed
@@ -201,6 +220,7 @@ class NetroniClient:
         try:
             async with asyncio.timeout(CALL_TIMEOUT):
                 self._ws = await self._session.ws_connect(self.url, heartbeat=30, ssl=self._ssl)
+                self._check_certificate(self._ws)
                 if self.token:
                     await self._authenticate(self._ws)
         except aiohttp.ServerFingerprintMismatch as err:
@@ -208,6 +228,24 @@ class NetroniClient:
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             raise CannotConnect(f"cannot connect to {self.url}: {err}") from err
         self._reader = asyncio.create_task(self._read_loop(self._ws))
+
+    def _check_certificate(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        """Which pinned certificate this connection met; none of them: ServerFingerprintMismatch (the
+        connection closed, the token not sent)."""
+        self.served_fingerprint = None
+        if not self._fingerprints:
+            return
+        import hashlib
+
+        ssl_object = ws.get_extra_info("ssl_object")
+        der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+        served = hashlib.sha256(der).hexdigest() if der else ""
+        if served not in self._fingerprints:
+            asyncio.ensure_future(ws.close())
+            self._ws = None
+            raise aiohttp.ServerFingerprintMismatch(bytes.fromhex(self._fingerprints[0]),
+                                                    bytes.fromhex(served) if served else b"", "", 0)
+        self.served_fingerprint = served
 
     async def _authenticate(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         await ws.send_json({"type": "auth", "token": self.token})
