@@ -71,16 +71,21 @@ async def async_fetch_certificate(hass, host: str, port: int) -> tuple[str, str]
 async def async_pair(
     session: aiohttp.ClientSession, host: str, port: int, fingerprint: str, name: str, code: str | None = None
 ) -> dict:
-    """Pair with an XP-Master's remote access: {"token", "client_id", "master_id"}. Without a code:
-    pairing by an XP-Bridge's button; this waits for the press (the XP-Bridge first answers
-    "pair_waiting"). Raises CommandError("pair_invalid") for a wrong code, no open window or no
-    press in time, CannotConnect otherwise."""
+    """Pair with an XP-Master's remote access: {"token", "client_id", "master_id"}. With a code: by CPace
+    (cpace.py, xp-master docs/pairing.md), which proves the code without sending it and binds the run to
+    the pinned certificate, so a man in the middle learns nothing. Without a code: pairing by an
+    XP-Bridge's button (no secret is sent); this waits for the press (the XP-Bridge first answers
+    "pair_waiting"). Raises CommandError("pair_invalid") for a wrong code, no open window or no press
+    in time, CommandError("pake_unsupported") for an XP-Master older than 0.17.0, CannotConnect
+    otherwise."""
     url = f"wss://{host}:{port}{WS_PATH}"
-    request = {"type": "pair", "name": name, **({"code": code} if code is not None else {"button": True})}
     try:
-        async with asyncio.timeout(CALL_TIMEOUT if code is not None else BUTTON_TIMEOUT):
+        if code is not None:
+            async with asyncio.timeout(CALL_TIMEOUT):
+                return await _pair_by_code(session, url, fingerprint, name, code)
+        async with asyncio.timeout(BUTTON_TIMEOUT):
             async with session.ws_connect(url, ssl=_pinned(fingerprint)) as ws:
-                await ws.send_json(request)
+                await ws.send_json({"type": "pair", "name": name, "button": True})
                 msg = await ws.receive()
                 while msg.type is aiohttp.WSMsgType.TEXT and json.loads(msg.data).get("type") == "pair_waiting":
                     msg = await ws.receive()
@@ -89,6 +94,42 @@ async def async_pair(
     except (aiohttp.ClientError, TimeoutError, OSError) as err:
         raise CannotConnect(f"cannot connect to {url}: {err}") from err
     reply = json.loads(msg.data) if msg.type is aiohttp.WSMsgType.TEXT else {}
+    if reply.get("type") == "pair_ok":
+        return reply
+    raise CommandError("pair_invalid", reply.get("message", "pairing refused"))
+
+
+async def _pair_by_code(session: aiohttp.ClientSession, url: str, fingerprint: str, name: str, code: str) -> dict:
+    """CPace with the XP-Master: our share, its share and tag (checked: a wrong code, or another
+    certificate in between, stops here without anything secret sent), our tag, then the token."""
+    import base64
+
+    from . import cpace
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    def unb64(text) -> bytes:
+        if not isinstance(text, str):
+            raise ValueError("not base64url")
+        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+    # The certificate the connection is pinned to: aiohttp refuses any other, so this is the one seen.
+    us = cpace.Initiator(code, bytes.fromhex(fingerprint.replace(":", "")), name.encode())
+    async with session.ws_connect(url, ssl=_pinned(fingerprint)) as ws:
+        await ws.send_json({"type": "pake_start", "name": name, "sid": b64(us.sid), "share": b64(us.share)})
+        reply = await ws.receive_json()
+        if reply.get("type") == "auth_invalid":  # it doesn't know pake_start: an XP-Master before 0.17.0
+            raise CommandError("pake_unsupported", "update the XP-Master to pair with it")
+        if reply.get("type") != "pake_reply":
+            raise CommandError("pair_invalid", reply.get("message", "pairing refused"))
+        try:
+            our_tag = us.finish(unb64(reply.get("share")), str(reply.get("master_id", "")).encode(),
+                                unb64(reply.get("confirm")))
+        except (cpace.CPaceError, ValueError) as err:
+            raise CommandError("pair_invalid", "wrong code") from err
+        await ws.send_json({"type": "pake_confirm", "confirm": b64(our_tag)})
+        reply = await ws.receive_json()
     if reply.get("type") == "pair_ok":
         return reply
     raise CommandError("pair_invalid", reply.get("message", "pairing refused"))

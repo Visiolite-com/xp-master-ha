@@ -31,7 +31,8 @@
     },
     "error": {
       "cannot_connect": "Could not connect to the XP-Master.",
-      "invalid_code": "Wrong code, or the pairing window has closed. Open a new one in the XP-Master's Netroni panel."
+      "invalid_code": "Wrong code, or the pairing window has closed. Open a new one in the XP-Master's Netroni panel.",
+      "update_xp_master": "This XP-Master is too old to pair with: update it first (Settings → Updates in its Netroni panel or app)."
     },
     "abort": {
       "already_configured": "This XP-Master or XP-Bridge is already configured.",

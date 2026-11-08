@@ -89,8 +89,8 @@ class NetroniConfigFlow(ConfigFlow, domain=DOMAIN):
                     async_get_clientsession(self.hass), self._host, self._port, self._fingerprint,
                     self.hass.config.location_name or "Home Assistant", user_input["code"].replace(" ", ""),
                 )
-            except CommandError:
-                errors["base"] = "invalid_code"
+            except CommandError as err:
+                errors["base"] = "update_xp_master" if err.code == "pake_unsupported" else "invalid_code"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
