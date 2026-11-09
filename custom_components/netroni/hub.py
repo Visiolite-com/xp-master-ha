@@ -117,6 +117,7 @@ class NetroniHub:
         self.async_update_offline_issues()
         self._update_hidden()
         self._notify()
+        self.entry.async_create_background_task(self.hass, self.async_send_home(), "netroni home")
 
     @callback
     def _apply_renames(self, old: dict) -> None:
@@ -243,6 +244,19 @@ class NetroniHub:
             await self._take_keys(rotation)
         except (CannotConnect, CommandError) as err:  # the next connection's hello tries again
             _LOGGER.warning("%s: could not take its renewed keys yet: %s", self.entry.title, err)
+
+    async def async_send_home(self) -> None:
+        """Home Assistant's location and time zone to the XP-Master's circadian lighting: they are Home
+        Assistant's only (Settings > System > General), neither app sets them. On every connection (a new
+        or reset XP-Master has none) and when they change here; the XP-Master ignores the same values.
+        An XP-Bridge has no circadian lighting."""
+        if self.kind != "master" or not self.available:
+            return
+        try:
+            await self.client.call("circadian/set", latitude=self.hass.config.latitude,
+                                   longitude=self.hass.config.longitude, timezone=self.hass.config.time_zone)
+        except (CannotConnect, CommandError) as err:  # the next connection tries again
+            _LOGGER.warning("%s: could not send the home location and time zone: %s", self.entry.title, err)
 
     def _on_event(self, event: str, data: dict) -> None:
         if event == "key_rotation":

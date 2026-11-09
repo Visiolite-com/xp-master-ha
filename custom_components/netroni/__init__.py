@@ -4,8 +4,8 @@ from __future__ import annotations
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import ATTR_DEVICE_ID, Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.const import ATTR_DEVICE_ID, EVENT_CORE_CONFIG_UPDATE, Platform
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -113,6 +113,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetroniConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_setup_label_sync(hass, entry, hub))
+
+    @callback
+    def home_changed(_event: Event) -> None:  # HA's location or time zone: circadian's too
+        entry.async_create_background_task(hass, hub.async_send_home(), "netroni home")
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, home_changed))
     async_dispatcher_send(hass, SIGNAL_HUBS_CHANGED)
     return True
 
