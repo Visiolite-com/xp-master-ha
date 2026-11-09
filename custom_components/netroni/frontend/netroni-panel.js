@@ -17,6 +17,12 @@ const UNIVERSES = { artnet: [0, 32767], sacn: [1, 63999] };
 /** The other protocol has the universe: one source at a time across Art-Net and sACN. */
 const heldBy = (held, waiting) =>
   `${held.protocol === "sacn" ? "sACN" : "Art-Net"} from <b>${esc(held.source)}</b> has the universe; ${waiting} waits until it stops.`;
+// Circadian curves, under the curve choice (xp-master docs/circadian.md)
+const CURVE_HELP = {
+  home: "Slow morning, some evening light after sunset, warmest from Evening light until.",
+  office: "Cool by mid-morning, warmest at sunset.",
+  natural: "The sun's own colour, warmest at sunset.",
+};
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -521,6 +527,13 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
+    if (el.id?.startsWith("circadian-curve-")) {  // only the Home curve has evening light
+      const until = this.shadowRoot.getElementById(el.id.replace("-curve-", "-until-"));
+      if (until && this._admin) until.disabled = el.value !== "home";
+      const help = this.shadowRoot.getElementById(el.id.replace("-curve-", "-curve-help-"));
+      if (help) help.textContent = CURVE_HELP[el.value] ?? "";
+      return;
+    }
     if (this._dialog?.kind === "input") {
       const d = this._dialog;
       if (el.name === "input-mode") {
@@ -1344,7 +1357,7 @@ class NetroniPanel extends HTMLElement {
       }
     }
     const option = (value, label, current) => `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
-    const curves = [["home", "Home: slow mornings, warm evenings"], ["office", "Office: cooler working light"], ["natural", "Natural: the real sun"]];
+    const curves = [["home", "Home"], ["office", "Office"], ["natural", "Natural"]];
     const places = [["@home_assistant", `Home location from Home Assistant${status.home_name ? ` (${status.home_name})` : ""}`],
       ["@app", "From App"], ...(status.places || []).map((p) => [p.key, p.name])];
     const followed = status.place || (status.location_from === "app" ? "@app" : "@home_assistant");
@@ -1382,10 +1395,11 @@ class NetroniPanel extends HTMLElement {
           <label class="field"><span>Curve</span><select id="circadian-curve-${entry}" ${lock}>${curves.map(([v, l]) => option(v, l, status.curve)).join("")}</select></label>
           <label class="field"><span>Follow the sun of</span><select id="circadian-place-${entry}" ${lock}>${places.map(([v, l]) => option(v, l, followed)).join("")}</select></label>
         </div>
+        <div class="sub pad" id="circadian-curve-help-${entry}">${esc(CURVE_HELP[status.curve] ?? "")}</div>
         <div class="field-row">
           <label class="field"><span>Warmest, at night (K)</span><input id="circadian-warmest-${entry}" type="number" step="10" value="${esc(status.warmest)}" ${lock}></label>
           <label class="field"><span>Coolest, by day (K)</span><input id="circadian-coolest-${entry}" type="number" step="10" value="${esc(status.coolest)}" ${lock}></label>
-          <label class="field"><span>Evening light until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock}></label>
+          <label class="field"><span>Evening light until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock || (status.curve === "home" ? "" : "disabled")}></label>
         </div>
         ${suggest ? `<div class="sub pad">${suggest}</div>` : ""}
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="circadian-save" data-entry="${entry}">Save</button></div>` : ""}
