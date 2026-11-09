@@ -1385,7 +1385,7 @@ class NetroniPanel extends HTMLElement {
         <div class="field-row">
           <label class="field"><span>Warmest, at night (K)</span><input id="circadian-warmest-${entry}" type="number" step="10" value="${esc(status.warmest)}" ${lock}></label>
           <label class="field"><span>Coolest, by day (K)</span><input id="circadian-coolest-${entry}" type="number" step="10" value="${esc(status.coolest)}" ${lock}></label>
-          <label class="field"><span>Warm until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock}></label>
+          <label class="field"><span>Evening light until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock}></label>
         </div>
         ${suggest ? `<div class="sub pad">${suggest}</div>` : ""}
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="circadian-save" data-entry="${entry}">Save</button></div>` : ""}
