@@ -21,7 +21,7 @@ const heldBy = (held, waiting) =>
 const CURVE_HELP = {
   home: "Slow morning, some evening light after sunset, warmest from Evening light until.",
   office: "Cool by mid-morning, warmest at sunset.",
-  natural: "The sun's own colour, warmest at sunset.",
+  natural: "Follows the colour of real sunlight, warmest at sunset.",
 };
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
