@@ -246,15 +246,21 @@ class NetroniHub:
             _LOGGER.warning("%s: could not take its renewed keys yet: %s", self.entry.title, err)
 
     async def async_send_home(self) -> None:
-        """Home Assistant's location and time zone to the XP-Master's circadian lighting: they are Home
-        Assistant's only (Settings > System > General), neither app sets them. On every connection (a new
-        or reset XP-Master has none) and when they change here; the XP-Master ignores the same values.
-        An XP-Bridge has no circadian lighting."""
+        """Home Assistant's location and time zone (Settings > System > General) to the XP-Master's
+        circadian lighting, while it takes them from Home Assistant (location_from; else an app sets
+        them). On every connection (a new or reset XP-Master has none), when they change here, and on a
+        configuration change (an app switching it back to Home Assistant's). Only when they differ.
+        An XP-Bridge's location always comes from an app."""
         if self.kind != "master" or not self.available:
             return
+        home = {"latitude": self.hass.config.latitude, "longitude": self.hass.config.longitude,
+                "timezone": self.hass.config.time_zone}
         try:
-            await self.client.call("circadian/set", latitude=self.hass.config.latitude,
-                                   longitude=self.hass.config.longitude, timezone=self.hass.config.time_zone)
+            status = await self.client.call("circadian/get")
+            if status.get("location_from", "home_assistant") != "home_assistant":
+                return
+            if any(status.get(name) != value for name, value in home.items()):
+                await self.client.call("circadian/set", **home)
         except (CannotConnect, CommandError) as err:  # the next connection tries again
             _LOGGER.warning("%s: could not send the home location and time zone: %s", self.entry.title, err)
 
@@ -274,6 +280,7 @@ class NetroniHub:
             self.entry.async_create_background_task(
                 self.hass, self._refresh_config(), "netroni refresh config"
             )
+            self.entry.async_create_background_task(self.hass, self.async_send_home(), "netroni home")
         elif event == "mini_status":
             mini = self.mini(data.get("uid", ""))
             if mini is not None:

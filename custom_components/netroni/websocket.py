@@ -860,6 +860,7 @@ async def ws_circadian_status(hass: HomeAssistant, connection: websocket_api.Act
         vol.Optional("warmest"): vol.All(int, vol.Range(min=1000, max=10000)),
         vol.Optional("coolest"): vol.All(int, vol.Range(min=1000, max=10000)),
         vol.Optional("warm_until"): str,
+        vol.Optional("location_from"): vol.In(["home_assistant", "app"]),
         vol.Optional("place"): str,
         vol.Optional("groups"): [str],
         vol.Optional("lights"): [str],
@@ -867,13 +868,18 @@ async def ws_circadian_status(hass: HomeAssistant, connection: websocket_api.Act
 )
 @websocket_api.async_response
 async def ws_circadian_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
-    """Circadian's settings, in use at once; the new status. The home location and time zone are always
-    Home Assistant's own (Settings > System > General)."""
-    fields = {k: msg[k] for k in ("enabled", "curve", "warmest", "coolest", "warm_until", "place", "groups", "lights")
-              if k in msg}
-    fields.update(latitude=hass.config.latitude, longitude=hass.config.longitude, timezone=hass.config.time_zone)
+    """Circadian's settings, in use at once; the new status. The home location and time zone: Home
+    Assistant's own (Settings > System > General) while location_from is "home_assistant"; with "app",
+    a phone's, which this never overwrites."""
+    fields = {k: msg[k] for k in ("enabled", "curve", "warmest", "coolest", "warm_until", "location_from", "place",
+                                  "groups", "lights") if k in msg}
+    client = _hub(hass, msg["entry_id"]).client
     try:
-        status = await _hub(hass, msg["entry_id"]).client.call("circadian/set", **fields)
+        location_from = fields.get("location_from") or (await client.call("circadian/get")).get("location_from")
+        if location_from in (None, "home_assistant"):
+            fields.update(latitude=hass.config.latitude, longitude=hass.config.longitude,
+                          timezone=hass.config.time_zone)
+        status = await client.call("circadian/set", **fields)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return

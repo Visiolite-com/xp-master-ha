@@ -1316,7 +1316,10 @@ class NetroniPanel extends HTMLElement {
       this._toast("Warmest and coolest: whole numbers in kelvin, 1000–10000, warmest below coolest");
       return;
     }
-    const fields = { curve: value("curve"), warmest, coolest, warm_until: value("until"), place: value("place") };
+    // "Follow the sun of": Home Assistant's location, the app's, or a city (on the home clock).
+    const where = value("place");
+    const fields = { curve: value("curve"), warmest, coolest, warm_until: value("until"), place: where.startsWith("@") ? "" : where };
+    if (where === "@home_assistant" || where === "@app") fields.location_from = where.slice(1);
     if (await this._setCircadian(entry, fields)) this._toast("Circadian settings saved");
   }
 
@@ -1342,7 +1345,9 @@ class NetroniPanel extends HTMLElement {
     }
     const option = (value, label, current) => `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
     const curves = [["home", "Home: slow mornings, warm evenings"], ["office", "Office: cooler working light"], ["natural", "Natural: the real sun"]];
-    const places = [["", `Home location${status.home_name ? ` (${status.home_name})` : ""}`], ...(status.places || []).map((p) => [p.key, p.name])];
+    const places = [["@home_assistant", `Home location from Home Assistant${status.home_name ? ` (${status.home_name})` : ""}`],
+      ["@app", "From App"], ...(status.places || []).map((p) => [p.key, p.name])];
+    const followed = status.place || (status.location_from === "app" ? "@app" : "@home_assistant");
     const following = master.lights.filter((l) => l.kind === "tunable_white" && this._follows(entry, l.id)).map((l) => l.id);
     // Each light keeps the curve's value inside its own range: say where one can't follow it all the way.
     const ranges = following.map((id) => master.lights.find((l) => l.id === id))
@@ -1375,7 +1380,7 @@ class NetroniPanel extends HTMLElement {
       <div class="circadian-form">
         <div class="field-row">
           <label class="field"><span>Curve</span><select id="circadian-curve-${entry}" ${lock}>${curves.map(([v, l]) => option(v, l, status.curve)).join("")}</select></label>
-          <label class="field"><span>Follow the sun of</span><select id="circadian-place-${entry}" ${lock}>${places.map(([v, l]) => option(v, l, status.place)).join("")}</select></label>
+          <label class="field"><span>Follow the sun of</span><select id="circadian-place-${entry}" ${lock}>${places.map(([v, l]) => option(v, l, followed)).join("")}</select></label>
         </div>
         <div class="field-row">
           <label class="field"><span>Warmest, at night (K)</span><input id="circadian-warmest-${entry}" type="number" step="10" value="${esc(status.warmest)}" ${lock}></label>
