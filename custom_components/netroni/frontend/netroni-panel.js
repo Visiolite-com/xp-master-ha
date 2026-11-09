@@ -1716,8 +1716,8 @@ class NetroniPanel extends HTMLElement {
         ${this._tabButton("scenes", "Scenes")}
         ${this._xpMasters.length ? this._tabButton("matter", "Matter") : ""}
         ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
-        ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
         ${this._tabButton("settings", "Settings")}
+        ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
       <div class="content"><div class="inner">${this._body()}</div></div>`;
     if (scroll) this.shadowRoot.querySelector(".content").scrollTop = scroll;
@@ -1921,7 +1921,7 @@ class NetroniPanel extends HTMLElement {
     const custom = range[0] !== CCT_DEFAULT[0] || range[1] !== CCT_DEFAULT[1];
     const light = master.lights.find((l) => l.mini_uid === mini.uid && l.key === `port${port}t`);
     const label = cctLabel(range) + (this._follows(master.entry_id, light?.id)
-      ? ` <ha-icon class="chip-sun" icon="mdi:weather-sunset" title="Follows circadian lighting"></ha-icon>` : "");
+      ? `<ha-icon class="chip-sun" icon="mdi:weather-sunset" title="Follows circadian lighting"></ha-icon>` : "");
     return this._admin
       ? `<button class="range ${custom ? "custom" : ""}" data-action="cct" ${data} title="Colour range of the strip on Port ${port}">${label}</button>`
       : `<span class="range ${custom ? "custom" : ""}" title="Colour range of the strip on Port ${port}">${label}</span>`;
@@ -2734,7 +2734,7 @@ const STYLE = `
   .circadian-form .field { min-width: 180px; }
   .circadian-form .actions { margin: 16px 0 14px; }
   .circadian-form .link { font: inherit; color: var(--primary-color); background: none; border: 0; padding: 0 0 0 4px; cursor: pointer; }
-  .chip-sun { --mdc-icon-size: 15px; vertical-align: -2px; color: var(--warning-color, #f0a400); }
+  .chip-sun { --mdc-icon-size: 15px; display: inline-flex; color: var(--warning-color, #f0a400); }
   .mqtt-form .field-row { flex-wrap: wrap; }
   .mqtt-form .field { min-width: 220px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; flex: none; }
@@ -2804,6 +2804,7 @@ const STYLE = `
   .tw-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
   .tw-row .tw { margin-top: 0; }
   .range { margin-left: auto; font: inherit; font-size: 12px; white-space: nowrap; padding: 2px 8px; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px; line-height: 16px;
     color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), .1); border: 1px solid rgba(var(--rgb-primary-color, 3, 169, 244), .35); }
   span.range { cursor: default; }
   .range.custom { color: #e65100; background: rgba(255, 152, 0, .12); border-color: rgba(255, 152, 0, .45); }
