@@ -94,6 +94,7 @@ class NetroniPanel extends HTMLElement {
     this._dmx = {}; // entry_id -> netroni/dmx_snapshot result (plus fps, measured here)
     this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
+    this._control = {}; // entry_id -> netroni/control_status result, or {failed}
     this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
     this._circadian = {}; // entry_id -> netroni/circadian_status result, or {failed}
     this._circEditors = {}; // entry_id -> its <netroni-circadian>, kept across redraws
@@ -499,6 +500,12 @@ class NetroniPanel extends HTMLElement {
         this._renderMain();
         this._loadCircadian(true);
         break;
+      case "control-save":
+        this._saveControl(d.entry);
+        break;
+      case "control-clear-password":
+        this._setControl(d.entry, { password: "" }).then((ok) => ok && this._toast("Control systems password removed"));
+        break;
       case "mqtt-clear-password":
         this._setMqtt(d.entry, { password: "" }).then((ok) => ok && this._toast("MQTT password removed"));
         break;
@@ -619,6 +626,9 @@ class NetroniPanel extends HTMLElement {
       this._dmxPct = el.value === "pct";
       this._updateDmx();
       return;
+    }
+    if (el.dataset?.action === "control-enabled") {
+      this._setControl(el.dataset.entry, { enabled: el.checked });
     }
     if (el.dataset?.action === "mqtt-enabled") {
       this._setMqtt(el.dataset.entry, { enabled: el.checked });
@@ -1024,7 +1034,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._circadian, "netroni/circadian_status"]]) {
+      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._control, "netroni/control_status"], [this._circadian, "netroni/circadian_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -1038,7 +1048,7 @@ class NetroniPanel extends HTMLElement {
       }
     }
     // Not while an MQTT or circadian field is being typed in: drawing again would lose it.
-    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form, .circadian-form");
+    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form, .control-form, .circadian-form");
     if (changed && this._tab === "settings" && !typing) this._renderMain();
   }
 
@@ -1089,6 +1099,74 @@ class NetroniPanel extends HTMLElement {
         <div class="field-row">${field("client", "Client ID", status.client_id, status.client_id_used)}<div class="field"></div></div>
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="mqtt-save" data-entry="${entry}">Save</button>
           ${status.password_set ? `<button class="btn secondary" data-action="mqtt-clear-password" data-entry="${entry}">Remove password</button>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  async _setControl(entry, fields) {
+    try {
+      this._control[entry] = await this._call({ type: "netroni/control_set", entry_id: entry, ...fields });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._renderMain();
+    }
+  }
+
+  async _saveControl(entry) {
+    const port = Number(this.shadowRoot.getElementById(`control-port-${entry}`)?.value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      this._toast("The port is a number from 1 to 65535");
+      return;
+    }
+    const fields = { port };
+    const password = this.shadowRoot.getElementById(`control-password-${entry}`)?.value ?? "";
+    if (password) fields.password = password; // empty: keep the one set
+    if (await this._setControl(entry, fields)) this._toast("Control systems settings saved");
+  }
+
+  /** The installers' command page (served with the panel), with this XP-Master's address and port. */
+  _controlDocUrl(master, status) {
+    const loopback = ["127.0.0.1", "localhost", "::1"].includes(master.host);
+    const host = loopback ? this._artnet[master.entry_id]?.address || "" : master.host || "";
+    const q = new URLSearchParams({ ...(host ? { host } : {}), port: String(status.port || 23) });
+    return `/netroni_static/control-commands.html?${q}`;
+  }
+
+  /** Control systems over TCP (Crestron, Extron, Control4…): xp-master docs/control-tcp.md. */
+  _controlSection(master) {
+    const entry = master.entry_id;
+    const status = this._control[entry];
+    const title = "Control systems (TCP)";
+    if (!status) return `<h4>${title}</h4><div class="empty small">Loading…</div>`;
+    if (status.failed) return `<h4>${title}</h4>${this._banner("warn", "mdi:alert-outline", `Could not be read: ${esc(status.failed)}`)}`;
+    const lock = this._admin ? "" : "disabled";
+    const time = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    let line = "";
+    if (status.enabled) {
+      const who = (status.connections || []).map((c) => `${esc(c.address)} (since ${time(c.since)})`);
+      line = !status.listening
+        ? `Not listening${status.error ? `: ${esc(status.error)}` : ""}.`
+        : `Listening on port <b>${status.port}</b>${status.password_set ? ", with a password" : ", <b>no password</b>"}. `
+          + (who.length ? `Connected: ${who.join(", ")}.` : "Nothing connected.");
+    }
+    return `
+      <h4>${title}</h4>
+      <div class="set-row">
+        <div class="grow"><div>${title}</div><div class="sub">Plain-text commands over TCP for control systems (Crestron, Extron, Control4, Savant…): scenes, groups and lights, with every change reported back. From the home network only; not encrypted: set a password.</div></div>
+        <label class="tw"><input type="checkbox" data-action="control-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+      </div>
+      ${line ? `<div class="sub pad">${line}</div>` : ""}
+      <div class="sub pad"><a href="${this._controlDocUrl(master, status)}" target="_blank" rel="noopener">Command reference for installers</a></div>
+      <div class="control-form">
+        <div class="field-row">
+          <label class="field"><span>Port</span>
+            <input id="control-port-${entry}" type="number" min="1" max="65535" value="${esc(status.port)}" ${lock}></label>
+          <label class="field"><span>Password</span>
+            <input id="control-password-${entry}" type="password" value="" placeholder="${status.password_set ? "•••••••• (set; leave empty to keep it)" : "none"}" autocomplete="off" ${lock}></label>
+        </div>
+        ${this._admin ? `<div class="actions left"><button class="btn" data-action="control-save" data-entry="${entry}">Save</button>
+          ${status.password_set ? `<button class="btn secondary" data-action="control-clear-password" data-entry="${entry}">Remove password</button>` : ""}</div>` : ""}
       </div>`;
   }
 
@@ -1191,7 +1269,7 @@ class NetroniPanel extends HTMLElement {
       html += this._fold(entry, "circadian", "sun", "Circadian lighting", this._circadianSummary(entry),
         () => this._circadianSection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
       html += this._fold(entry, "protocols", "mdi:lan", "Network protocols", this._protocolsSummary(entry),
-        () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master)]
+        () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master), this._controlSection(master)]
           .filter(Boolean).map((part) => `<div class="sub-card">${part}</div>`).join(""));
     }
     if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
@@ -1235,12 +1313,14 @@ class NetroniPanel extends HTMLElement {
     const art = this._artnet[entry];
     const sacn = this._sacn[entry];
     const mqtt = this._mqtt[entry];
+    const control = this._control[entry];
     const part = (name, st, on) => (!st ? "" : st.failed ? `${name} ?` : st.enabled ? `${name} ${on(st)}` : `${name} off`);
     return [
       part("Art-Net", art, (st) => `on (universe ${esc(st.port_address)})`),
       part("sACN", sacn, (st) => `on (universe ${esc(st.universe)})`),
       art && !art.failed && art.pro_mode ? "Pro Mode" : "",
       part("MQTT", mqtt, (st) => (st.connected ? "connected" : "not connected")),
+      part("Control systems", control, (st) => (!st.listening ? "not listening" : `on port ${st.port}${st.connections?.length ? ` (${st.connections.length} connected)` : ""}`)),
     ].filter(Boolean).join(" · ");
   }
 
@@ -2804,7 +2884,7 @@ const STYLE = `
   .set-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
   .set-row:first-of-type { border-top: 0; }
   .set-value { font-size: 15px; font-weight: 500; }
-  .mqtt-form, .circadian-form { margin-top: 4px; }
+  .mqtt-form, .control-form, .circadian-form { margin-top: 4px; }
   .circadian-form .field-row { flex-wrap: wrap; }
   .circadian-form .field { min-width: 180px; }
   .circadian-form .actions { margin: 16px 0 14px; }

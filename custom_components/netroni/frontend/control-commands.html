@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Netroni Control Commands</title>
+<!-- Control systems over TCP: the command reference for installers (xp-master docs/control-tcp.md).
+     Served by the Netroni integration at /netroni_static/control-commands.html; the panel's link adds
+     ?host=<XP-Master address>&port=<port> so the examples show this installation's. -->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2329; --muted: #5d6873; --line: #e3e7eb;
+    --accent: #0a97c3; --accent-soft: #e4f4fa; --code-bg: #f1f4f7; --ok: #2e7d32; --err: #c62828; --rep: #8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111417; --card: #1a1f24; --text: #e6eaee; --muted: #9aa6b1; --line: #2b333b;
+      --accent: #34b6df; --accent-soft: #15303b; --code-bg: #12171c; --ok: #81c784; --err: #ef9a9a; --rep: #f0c36d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--card); border-bottom: 1px solid var(--line); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 16px; }
+  header .wrap { padding-top: 28px; padding-bottom: 22px; }
+  .brand { color: var(--accent); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; }
+  h1 { margin: 4px 0 6px; font-size: 26px; line-height: 1.25; }
+  header p { margin: 0; color: var(--muted); max-width: 680px; }
+  nav { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; }
+  nav a { flex: none; color: var(--muted); text-decoration: none; padding: 5px 10px; border-radius: 999px; font-size: 13.5px; }
+  nav a:hover { background: var(--accent-soft); color: var(--accent); }
+  main .wrap { padding-top: 24px; padding-bottom: 48px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 18px; }
+  h2 { margin: 0 0 10px; font-size: 18px; scroll-margin-top: 64px; }
+  h3 { margin: 18px 0 8px; font-size: 15px; color: var(--muted); font-weight: 600; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  code { font: 13.5px/1.5 ui-monospace, "SF Mono", Consolas, monospace; background: var(--code-bg);
+    padding: 1px 5px; border-radius: 5px; white-space: nowrap; }
+  pre { margin: 10px 0; padding: 14px 16px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+    overflow-x: auto; font: 13.5px/1.6 ui-monospace, "SF Mono", Consolas, monospace; }
+  pre .in { color: var(--accent); font-weight: 600; }
+  pre .ok { color: var(--ok); }
+  pre .err { color: var(--err); }
+  pre .rep { color: var(--rep); }
+  pre .note { color: var(--muted); }
+  .table { overflow-x: auto; margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; }
+  td:first-child { width: 44%; }
+  td:first-child code { white-space: normal; word-break: break-word; }
+  tr:last-child td { border-bottom: 0; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 4px; }
+  .fact { background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; }
+  .fact b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .fact span { font: 600 16px/1.4 ui-monospace, "SF Mono", Consolas, monospace; word-break: break-all; }
+  .tip { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 10px 10px 0; margin: 12px 0; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; padding: 0 16px 32px; }
+  @media (max-width: 600px) {
+    section { padding: 16px; border-radius: 12px; }
+    h1 { font-size: 22px; }
+    td:first-child { width: auto; }
+    tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    tr:last-child { border-bottom: 0; }
+    td { display: block; border: 0; padding: 2px 0; }
+    thead { display: none; }
+  }
+  @media print { nav { display: none; } section { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">Netroni · XP-Master</div>
+    <h1>Control systems over TCP</h1>
+    <p>Connect a Crestron, Extron, Control4 or any other control system to the XP-Master. Send simple
+      text commands to recall scenes and dim lights, and get a message back whenever something changes.</p>
+  </div>
+</header>
+<nav>
+  <div class="wrap">
+    <a href="#connect">Connect</a><a href="#basics">Basics</a><a href="#scenes">Scenes</a>
+    <a href="#groups">Groups</a><a href="#lights">Lights</a><a href="#circadian">Circadian</a><a href="#queries">Questions</a>
+    <a href="#reports">Updates</a><a href="#errors">Errors</a><a href="#drivers">Drivers</a>
+  </div>
+</nav>
+<main>
+<div class="wrap">
+
+<section id="connect">
+  <h2>Connect</h2>
+  <div class="facts">
+    <div class="fact"><b>Address</b><span class="host">the XP-Master's IP address</span></div>
+    <div class="fact"><b>Port</b><span class="port">23</span></div>
+    <div class="fact"><b>Connection</b><span>TCP</span></div>
+    <div class="fact"><b>End each line with</b><span>CR LF</span></div>
+  </div>
+  <p>First switch it on in Home Assistant under <b>Netroni → Settings → Network protocols</b>, or in the
+    Netroni app. We recommend setting a password there.</p>
+  <p>To try it, open a Telnet session from any computer on the same network:</p>
+  <pre><span class="note">$ telnet <span class="host">192.168.1.20</span> <span class="port">23</span></span>
+Netroni XP-Master XPM-1A2B3C4D
+login:
+<span class="in">LOGIN mypassword</span>
+<span class="ok">OK</span>
+<span class="in">SCENE 3 RECALL</span>
+<span class="rep">~SCENE 3 "Evening" RECALLED</span>
+<span class="ok">OK</span></pre>
+  <p>The <code>login:</code> line only appears when a password is set.</p>
+  <ul>
+    <li>It only works from the local network.</li>
+    <li>Up to 8 systems can be connected at the same time.</li>
+    <li>After 5 wrong passwords, that device has to wait a minute.</li>
+    <li>The connection can stay open as long as you like. Send <code>PING</code> to check it's still there.</li>
+  </ul>
+</section>
+
+<section id="basics">
+  <h2>The basics</h2>
+  <ul>
+    <li>Send one command per line. Capitals or not, it doesn't matter.</li>
+    <li>Each command gets <code>OK</code> back, or <code>ERR</code> with the reason.</li>
+    <li>Lines that start with <code>~</code> tell you how things are. They can arrive at any time, so read
+      them whenever they come.</li>
+    <li>Put names with spaces in quotes: <code>"Living room"</code>.</li>
+  </ul>
+  <h3>Scenes, groups and lights</h3>
+  <div class="table"><table>
+    <thead><tr><th></th><th>Best in a program</th><th>Also works</th></tr></thead>
+    <tbody>
+      <tr><td>Scene</td><td>its number: <code>SCENE 3</code></td><td>its name: <code>SCENE "Evening"</code></td></tr>
+      <tr><td>Group</td><td>its number: <code>GROUP 17</code></td><td>its name: <code>GROUP "Kitchen"</code></td></tr>
+      <tr><td>Light</td><td>its id: <code>LIGHT 7144/1T</code></td><td>its name: <code>LIGHT "Desk"</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Use numbers and ids in your program: they don't change when someone renames something in the app, or
+    when a device is replaced. A light's id is its XP-Mini and its port, for example <code>7144/1T</code>.
+    Send <code>?LIGHTS</code>, <code>?GROUPS</code> or <code>?SCENES</code> to get the full list.</p>
+  <h3>Numbers</h3>
+  <ul>
+    <li>Brightness and level are in percent, from <code>0</code> to <code>100</code>.</li>
+    <li>Colour temperature is in kelvin, for example <code>2700</code>.</li>
+    <li>To make a change gradual, add the seconds at the end: <code>GROUP 17 ON 2.5</code>.</li>
+  </ul>
+</section>
+
+<section id="scenes">
+  <h2>Scenes</h2>
+  <div class="table"><table>
+    <thead><tr><th>Send</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>SCENE 3 RECALL</code></td><td>Recalls the scene.</td></tr>
+      <tr><td><code>SCENE 3 OFF</code></td><td>Turns off the lights in the scene.</td></tr>
+      <tr><td><code>SCENE 3 TOGGLE</code></td><td>Recalls it, and turns it off the next time.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="groups">
+  <h2>Groups</h2>
+  <div class="table"><table>
+    <thead><tr><th>Send</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>GROUP 17 ON</code></td><td>Turns the group on.</td></tr>
+      <tr><td><code>GROUP 17 OFF</code></td><td>Turns the group off.</td></tr>
+      <tr><td><code>GROUP 17 TOGGLE</code></td><td>On if it's off, off if it's on.</td></tr>
+      <tr><td><code>GROUP 17 LEVEL 50</code></td><td>Sets the level to 50 %. If the group is off, it stays off and comes on at 50 % next time.</td></tr>
+      <tr><td><code>GROUP 17 ON LEVEL 50</code></td><td>Turns it on at 50 %.</td></tr>
+      <tr><td><code>GROUP 17 RAISE</code><br><code>GROUP 17 LOWER</code><br><code>GROUP 17 STOP</code></td><td>For a dimmer button you hold down: send RAISE or LOWER when it's pressed and STOP when it's released.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="lights">
+  <h2>Lights</h2>
+  <div class="table"><table>
+    <thead><tr><th>Send</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>LIGHT 7144/1T ON</code><br><code>LIGHT 7144/1T OFF</code><br><code>LIGHT 7144/1T TOGGLE</code></td><td>Turns the light on or off.</td></tr>
+      <tr><td><code>LIGHT 7144/1T BRIGHTNESS 40</code></td><td>Turns it on at 40 %.</td></tr>
+      <tr><td><code>LIGHT 7144/1T KELVIN 2700</code></td><td>Sets the colour temperature (tunable white lights only).</td></tr>
+      <tr><td><code>LIGHT 7144/1T RAISE</code><br><code>LIGHT 7144/1T LOWER</code><br><code>LIGHT 7144/1T STOP</code></td><td>Hold-to-dim, the same as for groups.</td></tr>
+    </tbody>
+  </table></div>
+  <p>You can combine them: <code>LIGHT 7144/1T BRIGHTNESS 40 KELVIN 2700</code></p>
+</section>
+
+<section id="circadian">
+  <h2>Circadian lighting</h2>
+  <div class="table"><table>
+    <thead><tr><th>Send</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><code>CIRCADIAN ON</code><br><code>CIRCADIAN OFF</code></td><td>Turns circadian lighting on or off for the whole home.</td></tr>
+      <tr><td><code>LIGHT 7144/1T FOLLOW</code></td><td>When someone has changed a light by hand, it stops following its circadian profile. This puts it back.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="queries">
+  <h2>Asking questions</h2>
+  <p>Commands that start with <code>?</code> ask how things are.</p>
+  <div class="table"><table>
+    <thead><tr><th>Send</th><th>You get</th></tr></thead>
+    <tbody>
+      <tr><td><code>?ALL</code></td><td>Every light and group as it is now. Send this each time you connect.</td></tr>
+      <tr><td><code>?LIGHT 7144/1T</code></td><td><code>~LIGHT 7144/1T "Desk" ON 40 2700</code></td></tr>
+      <tr><td><code>?GROUP 17</code></td><td><code>~GROUP 17 "Kitchen" ON 50</code></td></tr>
+      <tr><td><code>?LIGHTS</code></td><td>All lights, with their ids and names</td></tr>
+      <tr><td><code>?GROUPS</code></td><td>All groups, with their numbers and names</td></tr>
+      <tr><td><code>?SCENES</code></td><td>All scenes, with their numbers and names</td></tr>
+      <tr><td><code>?PACKS</code></td><td>All wall-switch inputs (X-Packs)</td></tr>
+      <tr><td><code>?CIRCADIAN</code></td><td>Whether circadian lighting is on, and each profile's values right now</td></tr>
+      <tr><td><code>HELP</code></td><td>A short list of all commands</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="reports">
+  <h2>Staying up to date</h2>
+  <p>Whenever something changes, every connected system is told, no matter who made the change: the app,
+    Home Assistant, a wall switch or another system.</p>
+  <pre><span class="rep">~LIGHT 7144/1T "Desk" ON 40 2700</span>
+<span class="rep">~GROUP 17 "Kitchen" ON 50</span>
+<span class="rep">~SCENE 3 "Evening" RECALLED</span>
+<span class="rep">~BUTTON AD2A "Hall" 1 PRESS</span>
+<span class="rep">~MINI 7144 OFFLINE</span></pre>
+  <p>A group can also be <code>PARTLY</code> on, when only some of its lights are on.</p>
+  <div class="tip"><b>Tip:</b> you get <code>~BUTTON</code> every time a wall-switch button is pressed, even if it
+    isn't set up to do anything. You can use those buttons for blinds, music or anything else.</div>
+</section>
+
+<section id="errors">
+  <h2>When something goes wrong</h2>
+  <div class="table"><table>
+    <thead><tr><th>You get</th><th>It means</th></tr></thead>
+    <tbody>
+      <tr><td><code>ERR 400</code></td><td>The command wasn't understood, or a value is out of range.</td></tr>
+      <tr><td><code>ERR 401</code></td><td>Wrong password.</td></tr>
+      <tr><td><code>ERR 404</code></td><td>That scene, group or light doesn't exist.</td></tr>
+      <tr><td><code>ERR 409</code></td><td>Two things have the same name. Use the number or id instead.</td></tr>
+      <tr><td><code>ERR 422</code></td><td>The light can't do that, for example a colour temperature on a light that only dims.</td></tr>
+      <tr><td><code>ERR 503</code></td><td>The light's XP-Mini is offline, or too many systems are connected.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><span class="in">SCENE 99 RECALL</span>
+<span class="err">ERR 404 no scene 99</span></pre>
+</section>
+
+<section id="drivers">
+  <h2>Setting up your control system</h2>
+  <ul>
+    <li>Use a plain TCP client to the address and port above, and end each command with CR LF.</li>
+    <li>Split what comes back into lines.</li>
+    <li>If you set a password, send <code>LOGIN</code> first.</li>
+    <li>Then send <code>?ALL</code> so your panels show the right state, and again after every reconnect.</li>
+    <li>Use the <code>~</code> lines to keep buttons and sliders in step with the lights.</li>
+  </ul>
+</section>
+
+</div>
+</main>
+<footer>Netroni XP-Master</footer>
+<script>
+  // The panel's link gives this installation's address and port: the examples show them.
+  const q = new URLSearchParams(location.search);
+  const host = q.get("host"), port = q.get("port");
+  if (host && /^[\w.:-]{1,100}$/.test(host)) document.querySelectorAll(".host").forEach((el) => (el.textContent = host));
+  if (port && /^\d{1,5}$/.test(port)) document.querySelectorAll(".port").forEach((el) => (el.textContent = port));
+</script>
+</body>
+</html>

@@ -74,6 +74,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_update_channel,
         ws_mqtt_status,
         ws_mqtt_set,
+        ws_control_status,
+        ws_control_set,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -1020,6 +1022,40 @@ async def ws_mqtt_set(hass: HomeAssistant, connection: websocket_api.ActiveConne
     fields = {k: msg[k] for k in ("enabled", "server", "client_id", "prefix", "username", "password") if k in msg}
     try:
         status = await _hub(hass, msg["entry_id"]).client.call("mqtt/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/control_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_control_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Control systems over TCP: the settings (no password: only whether one is set), who is connected."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("control/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/control_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("port"): vol.All(int, vol.Range(min=1, max=65535)),
+        vol.Optional("password"): vol.All(str, vol.Length(max=200)),  # "": none
+    }
+)
+@websocket_api.async_response
+async def ws_control_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Control systems over TCP on or off, its port and password: in use at once; the new status."""
+    fields = {k: msg[k] for k in ("enabled", "port", "password") if k in msg}
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("control/set", **fields)
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return
