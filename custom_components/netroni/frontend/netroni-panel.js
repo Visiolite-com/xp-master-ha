@@ -22,6 +22,10 @@ const heldBy = (held, waiting) =>
 // A scene's start and end transitions (the apps' ramps, viewBox 0 0 24 24, filled)
 const RAMP_UP = "M2 17H7.4L15.4 5H22V7.4H16.6L8.6 19.4H2Z";
 const RAMP_DOWN = "M2 5H8.6L16.6 17H22V19.4H15.4L7.4 7.4H2Z";
+// Circadian lighting: the apps' icon (Material "wb_twilight"), as one path
+const SUN_PATH = "M11 4h2v3h-2zM2 18h20v2H2zM5 16h14c0-3.87-3.13-7-7-7S5 12.13 5 16zM16.96 8.66l2.12-2.12 1.41 1.41-2.12 2.13zM3.54 7.92l1.42-1.41 2.12 2.12-1.42 1.42z";
+const sunSvg = (cls, title = "") =>
+  `<svg class="${cls} svg-icon" viewBox="0 0 24 24" ${title ? `role="img" aria-label="${title}"><title>${title}</title>` : 'aria-hidden="true">'}<path d="${SUN_PATH}"/></svg>`;
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -1184,7 +1188,7 @@ class NetroniPanel extends HTMLElement {
         .join("")}`;
     }
     if (xpMaster) {
-      html += this._fold(entry, "circadian", "mdi:weather-sunset", "Circadian lighting", this._circadianSummary(entry),
+      html += this._fold(entry, "circadian", "sun", "Circadian lighting", this._circadianSummary(entry),
         () => this._circadianSection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
       html += this._fold(entry, "protocols", "mdi:lan", "Network protocols", this._protocolsSummary(entry),
         () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master)]
@@ -1209,7 +1213,7 @@ class NetroniPanel extends HTMLElement {
       <div class="settings-fold ${open ? "open" : ""}">
         <div class="fold-head fold" data-action="collapse" data-key="${esc(key)}" role="button" aria-expanded="${open}">
           <ha-icon class="fold-chevron" icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon>
-          <ha-icon class="fold-icon" icon="${icon}"></ha-icon>
+          ${icon === "sun" ? sunSvg("fold-icon") : `<ha-icon class="fold-icon" icon="${icon}"></ha-icon>`}
           <div class="grow"><div class="fold-title">${title}</div>${summary ? `<div class="sub">${summary}</div>` : ""}</div>
         </div>
         ${open ? `<div class="fold-body">${body()}</div>` : ""}
@@ -1353,7 +1357,7 @@ class NetroniPanel extends HTMLElement {
   _sunIcon(entry, lightId, profile) {
     const paused = lightId && (this._circadian[entry]?.paused || []).includes(lightId);
     const title = `Circadian profile: ${profile.name}${paused ? " (set by hand: paused until switched off)" : ""}`;
-    return `<ha-icon class="chip-sun ${paused ? "paused" : ""}" icon="mdi:weather-sunset" title="${esc(title)}"></ha-icon>`;
+    return sunSvg(`chip-sun ${paused ? "paused" : ""}`, esc(title));
   }
 
   async _setCircadian(entry, fields) {
@@ -1428,7 +1432,7 @@ class NetroniPanel extends HTMLElement {
     return `
       <section class="card">
         <div class="card-head">
-          <ha-icon class="head-icon" icon="mdi:weather-sunset"></ha-icon>
+          ${sunSvg("head-icon")}
           <div class="grow"><h2>Circadian profiles</h2><div class="sub">${esc(master.name)}${state}</div></div>
         </div>
         <div class="circ-host" data-entry="${esc(master.entry_id)}"></div>
@@ -2805,6 +2809,7 @@ const STYLE = `
   .circadian-form .field { min-width: 180px; }
   .circadian-form .actions { margin: 16px 0 14px; }
   .circadian-form .link { font: inherit; color: var(--primary-color); background: none; border: 0; padding: 0 0 0 4px; cursor: pointer; }
+  .svg-icon { width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px); fill: currentColor; }
   .chip-sun { --mdc-icon-size: 15px; display: inline-flex; vertical-align: -3px; color: var(--warning-color, #f0a400); }
   .chip-sun.paused { color: var(--disabled-text-color, #9e9e9e); }
   .chip-pack { --mdc-icon-size: 15px; display: inline-flex; vertical-align: -3px; color: var(--primary-color); }
