@@ -1,6 +1,7 @@
 """The "Netroni" sidebar panel: installation overview and commissioning for every user.
 
-The panel is a plain web component (frontend/netroni-panel.js, no build step). The Netroni logo
+The panel is a plain web component (frontend/netroni-panel.js, no build step), with the circadian
+profile editor in frontend/netroni-circadian.js (stamped with the panel). The Netroni logo
 is registered as a custom icon ("netroni:logo") by frontend/netroni-icons.js, loaded on every page
 so the sidebar can show it.
 """
@@ -20,13 +21,13 @@ PANEL_URL_PATH = "netroni"
 FRONTEND = Path(__file__).parent / "frontend"
 
 
-def _stamp(name: str) -> str:
-    """Cache-busting: changes whenever the file does, so browsers never keep an old panel."""
-    return hashlib.sha256((FRONTEND / name).read_bytes()).hexdigest()[:12]
+def _stamp(*names: str) -> str:
+    """Cache-busting: changes whenever the files do, so browsers never keep an old panel."""
+    return hashlib.sha256(b"".join((FRONTEND / name).read_bytes() for name in names)).hexdigest()[:12]
 
 
 async def async_setup_panel(hass: HomeAssistant) -> None:
-    icons, panel = await hass.async_add_executor_job(lambda: (_stamp("netroni-icons.js"), _stamp("netroni-panel.js")))
+    icons, panel = await hass.async_add_executor_job(lambda: (_stamp("netroni-icons.js"), _stamp("netroni-panel.js", "netroni-circadian.js")))
     await hass.http.async_register_static_paths(
         [StaticPathConfig(URL_BASE, str(FRONTEND), cache_headers=False)]
     )

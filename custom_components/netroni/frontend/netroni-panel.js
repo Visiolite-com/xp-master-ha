@@ -9,6 +9,8 @@
 // imported here too, so the panel has them even when the browser still runs a start page cached
 // from before the integration was installed.
 import "./netroni-icons.js";
+// The circadian profile editor (the Circadian tab), stamped as this file is (panel.py).
+import(`./netroni-circadian.js?v=${new URL(import.meta.url).searchParams.get("v") || ""}`);
 
 const HIGHLIGHT_MS = 60_000; // how long a port that identified itself stays highlighted
 const MATTER_POLL_S = 10;
@@ -17,12 +19,9 @@ const UNIVERSES = { artnet: [0, 32767], sacn: [1, 63999] };
 /** The other protocol has the universe: one source at a time across Art-Net and sACN. */
 const heldBy = (held, waiting) =>
   `${held.protocol === "sacn" ? "sACN" : "Art-Net"} from <b>${esc(held.source)}</b> has the universe; ${waiting} waits until it stops.`;
-// Circadian curves, under the curve choice (xp-master docs/circadian.md)
-const CURVE_HELP = {
-  home: "Slow morning, some evening light after sunset, warmest from Evening light until.",
-  office: "Cool by mid-morning, warmest at sunset.",
-  natural: "Follows the colour of real sunlight, warmest at sunset.",
-};
+// A scene's start and end transitions (the apps' ramps, viewBox 0 0 24 24, filled)
+const RAMP_UP = "M2 17H7.4L15.4 5H22V7.4H16.6L8.6 19.4H2Z";
+const RAMP_DOWN = "M2 5H8.6L16.6 17H22V19.4H15.4L7.4 7.4H2Z";
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -62,7 +61,7 @@ const CCT_PRESETS = [
 ];
 const cctLabel = ([warm, cool]) => `${warm}–${cool} K`;
 
-// Closed cards on the Installation tab, remembered in this browser only ("master:<id>", "mini:<id>/<uid>");
+// Closed cards on the Overview tab, remembered in this browser only ("master:<id>", "mini:<id>/<uid>");
 // and the Settings tab's sections that are open ("open:<entry>/<section>": they start closed).
 const COLLAPSED_KEY = "netroni-collapsed";
 const loadCollapsed = () => {
@@ -93,6 +92,7 @@ class NetroniPanel extends HTMLElement {
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
     this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
     this._circadian = {}; // entry_id -> netroni/circadian_status result, or {failed}
+    this._circEditors = {}; // entry_id -> its <netroni-circadian>, kept across redraws
     this._relay = {}; // entry_id -> netroni/relay_status result, or {failed}
     this._dmxPct = false; // show values as % instead of 0-255
     this._dmxSel = null; // "entry|address" of the channel shown in the info line
@@ -150,7 +150,15 @@ class NetroniPanel extends HTMLElement {
     if (sig !== this._stateSig) {
       this._stateSig = sig;
       this._renderMain();
+      this._circadianSoon();
     }
+  }
+
+  /** A light changed: circadian's status again shortly (a change by hand pauses a light: its icon goes grey). */
+  _circadianSoon() {
+    if (this._tab === "circadian" || !Object.values(this._circadian).some((st) => st?.profiles?.length)) return;
+    clearTimeout(this._circTimer);
+    this._circTimer = setTimeout(() => this._loadCircadian(true), 1500);
   }
 
   set narrow(narrow) {
@@ -282,6 +290,7 @@ class NetroniPanel extends HTMLElement {
         if (this._tab === "matter") this._refreshMatter();
         if (this._tab === "remote") this._refreshRemote();
         if (this._tab === "settings") this._refreshArtnet();
+        if (this._tab === "circadian") this._loadCircadian(true);
         if (this._tab === "dmx") this._startDmxPoll();
         else this._stopDmxPoll();
         break;
@@ -481,17 +490,11 @@ class NetroniPanel extends HTMLElement {
       case "circadian-save":
         this._saveCircadian(d.entry);
         break;
-      case "circadian-suggest": {
-        // Into the fields only: Save keeps it, as with a range typed in.
-        const set = (name, value) => {
-          const input = this.shadowRoot.getElementById(`circadian-${name}-${d.entry}`);
-          if (input) input.value = value;
-        };
-        set("warmest", d.warm);
-        set("coolest", d.cool);
-        this._toast("Range filled in: Save to use it");
+      case "circadian-tab":
+        this._tab = "circadian";
+        this._renderMain();
+        this._loadCircadian(true);
         break;
-      }
       case "mqtt-clear-password":
         this._setMqtt(d.entry, { password: "" }).then((ok) => ok && this._toast("MQTT password removed"));
         break;
@@ -527,13 +530,6 @@ class NetroniPanel extends HTMLElement {
 
   _onChange(ev) {
     const el = ev.target;
-    if (el.id?.startsWith("circadian-curve-")) {  // only the Home curve has evening light
-      const until = this.shadowRoot.getElementById(el.id.replace("-curve-", "-until-"));
-      if (until && this._admin) until.disabled = el.value !== "home";
-      const help = this.shadowRoot.getElementById(el.id.replace("-curve-", "-curve-help-"));
-      if (help) help.textContent = CURVE_HELP[el.value] ?? "";
-      return;
-    }
     if (this._dialog?.kind === "input") {
       const d = this._dialog;
       if (el.name === "input-mode") {
@@ -680,7 +676,10 @@ class NetroniPanel extends HTMLElement {
     const { light } = this._dialog;
     const name = this.shadowRoot.getElementById("light-name").value;
     const area = this.shadowRoot.getElementById("light-area").value || null;
-    await this._run(() => this._call({ type: "netroni/update_light", entity_id: light.entity_id, name, area_id: area }));
+    await this._run(async () => {
+      await this._call({ type: "netroni/update_light", entity_id: light.entity_id, name, area_id: area });
+      await this._applyProfileChoice(this._dialog.entry, light.id);
+    });
   }
 
   async _saveGroup() {
@@ -759,6 +758,50 @@ class NetroniPanel extends HTMLElement {
     return { warm, cool, valid };
   }
 
+  /** A light's circadian profile choice: its own profile, none, or its group's. Colour-only profiles only
+   * for tunable white: a dimmable light takes only a profile's dimming. "" without circadian here. */
+  _profileChoice(entry, lightId, kind) {
+    const st = this._circadian[entry];
+    if (!st || st.failed || !lightId) return "";
+    const profiles = st.profiles || [];
+    const own = profiles.find((p) => (p.lights || []).includes(lightId));
+    const follows = this._follows(entry, lightId);
+    const viaGroup = follows && !own ? ` It follows ${esc(follows.name)} with its group.` : "";
+    const fits = profiles.filter((p) => p.dimming || kind === "tunable_white");
+    const what = kind === "tunable_white" ? "colour temperature and brightness" : "brightness (a profile's dimming)";
+    return `
+        <div class="set-row">
+          <div class="grow"><div>Circadian profile</div><div class="sub">The XP-Master changes its ${what} through the day.${viaGroup}
+            ${st.enabled ? "" : "Circadian lighting is off: turn it on in Settings."}
+            ${fits.length ? "" : kind === "tunable_white" ? "No profile yet: make one in the Circadian tab." : "No profile with a dimming curve yet."}</div></div>
+          <select id="light-profile" ${this._busy || !this._admin ? "disabled" : ""}>
+            <option value="">${viaGroup ? "Its group's" : "None"}</option>
+            ${fits.map((p) => `<option value="${esc(p.id)}" ${own?.id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+          </select>
+        </div>`;
+  }
+
+  /** The profile chosen in a dialog, if it changed: off its own profile first (a light follows one at most). */
+  async _applyProfileChoice(entry, lightId) {
+    const choice = this.shadowRoot.getElementById("light-profile");
+    const st = this._circadian[entry];
+    if (!choice || !st || st.failed) return;
+    const own = (st.profiles || []).find((p) => (p.lights || []).includes(lightId));
+    if (choice.value === (own?.id || "")) return;
+    const strip = ({ kelvin, brightness, following, ...profile }) => profile;
+    let status = st;
+    if (own) {
+      status = await this._call({ type: "netroni/circadian_profile_set", entry_id: entry,
+        profile: { ...strip(own), lights: own.lights.filter((id) => id !== lightId) } });
+    }
+    const target = (status.profiles || []).find((p) => p.id === choice.value);
+    if (target) {
+      status = await this._call({ type: "netroni/circadian_profile_set", entry_id: entry,
+        profile: { ...strip(target), lights: [...target.lights, lightId] } });
+    }
+    this._circadian[entry] = { ...status, places: st.places, home_name: st.home_name };
+  }
+
   async _saveCct() {
     const { entry, uid, port } = this._dialog;
     const { warm, cool, valid } = this._cctInputs();
@@ -766,21 +809,10 @@ class NetroniPanel extends HTMLElement {
       this._toast("Warm must be at least 100 K below cool, both between 1000 and 10000 K");
       return;
     }
-    const follow = this.shadowRoot.getElementById("cct-circadian");
-    const { light, follows } = this._dialog;
+    const { light } = this._dialog;
     await this._run(async () => {
       await this._call({ type: "netroni/set_cct_range", entry_id: entry, uid, port, warm, cool });
-      if (follow && follow.checked !== follows) {
-        const st = this._circadian[entry];
-        const lights = new Set(st.lights || []);
-        if (follow.checked) lights.add(light);
-        else lights.delete(light);
-        // A light that followed with its group, switched off here: its group no longer follows.
-        const master = this._master(entry);
-        const groups = (st.groups || []).filter((id) => follow.checked || !master?.groups.find((g) => g.id === id)?.members.includes(light));
-        this._circadian[entry] = { places: st.places,
-          ...(await this._call({ type: "netroni/circadian_set", entry_id: entry, lights: [...lights], groups })) };
-      }
+      await this._applyProfileChoice(entry, light);
     });
   }
 
@@ -948,6 +980,12 @@ class NetroniPanel extends HTMLElement {
       } catch (err) {
         this._remote[master.entry_id] = { error: err.message || String(err) };
       }
+      if (!this._xpMasters.includes(master)) continue; // access from outside the home: XP-Masters only
+      try {
+        this._relay[master.entry_id] = await this._hass.callWS({ type: "netroni/relay_status", entry_id: master.entry_id });
+      } catch (err) {
+        this._relay[master.entry_id] = { failed: err.message || String(err) };
+      }
     }
     if (this._tab === "remote") this._renderMain();
   }
@@ -982,7 +1020,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._relay, "netroni/relay_status"], [this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._circadian, "netroni/circadian_status"]]) {
+      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._circadian, "netroni/circadian_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -1134,7 +1172,7 @@ class NetroniPanel extends HTMLElement {
         ${available}`;
     }
     if (master.minis.length) {
-      // Each XP-Mini's own menu, as on its card in Installation: restart, DMX, dimming curve, reset, replace, remove.
+      // Each XP-Mini's own menu, as on its card in Overview: restart, DMX, dimming curve, reset, replace, remove.
       html += `<h4>XP-Minis</h4>${master.minis
         .map((mini) => `
           <div class="set-row">
@@ -1148,8 +1186,6 @@ class NetroniPanel extends HTMLElement {
     if (xpMaster) {
       html += this._fold(entry, "circadian", "mdi:weather-sunset", "Circadian lighting", this._circadianSummary(entry),
         () => this._circadianSection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
-      html += this._fold(entry, "remote", "mdi:earth", "Remote access", this._relaySummary(entry),
-        () => this._relaySection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
       html += this._fold(entry, "protocols", "mdi:lan", "Network protocols", this._protocolsSummary(entry),
         () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master)]
           .filter(Boolean).map((part) => `<div class="sub-card">${part}</div>`).join(""));
@@ -1187,16 +1223,8 @@ class NetroniPanel extends HTMLElement {
     if (!st.enabled) return "Off";
     if (st.error) return `On · not running: ${esc(st.error)}`;
     const where = st.place_name ? ` · sun of ${esc(st.place_name)}` : "";
-    return `On · ${st.kelvin ? `${st.kelvin} K now` : "starting"} · ${st.following} light${st.following === 1 ? "" : "s"}${where}`;
-  }
-
-  _relaySummary(entry) {
-    const st = this._relay[entry];
-    if (!st) return "";
-    if (st.failed) return "Could not be read";
-    if (!st.enabled) return "Off";
-    if (st.paired === false) return "On · pair an app at home first";
-    return st.connected ? "On · reachable from outside the home" : "On · not reachable right now";
+    const profiles = st.profiles?.length || 0;
+    return `On · ${profiles} profile${profiles === 1 ? "" : "s"} · ${st.following} light${st.following === 1 ? "" : "s"}${where}`;
   }
 
   _protocolsSummary(entry) {
@@ -1285,11 +1313,11 @@ class NetroniPanel extends HTMLElement {
     return `<h4>sACN</h4>${body}`;
   }
 
-  /** Circadian status of each XP-Master not read yet (the Settings tab keeps it fresh). */
-  async _loadCircadian() {
+  /** Circadian status of each XP-Master not read yet, or of all of them (fresh). */
+  async _loadCircadian(fresh = false) {
     let changed = false;
     for (const master of this._xpMasters) {
-      if (this._circadian[master.entry_id]) continue;
+      if (this._circadian[master.entry_id] && !fresh) continue;
       try {
         this._circadian[master.entry_id] = await this._hass.callWS({ type: "netroni/circadian_status", entry_id: master.entry_id });
       } catch (err) {
@@ -1300,13 +1328,32 @@ class NetroniPanel extends HTMLElement {
     if (changed && !this._dialog) this._renderMain();
   }
 
-  /** Whether this light follows circadian: true / false, or null when it can't (no circadian here). */
+  /** The profile a light follows (its own, else its group's): the profile, false, or null when it can't
+   * tell (no circadian here). */
   _follows(entry, lightId) {
     const st = this._circadian[entry];
     if (!st || st.failed || !lightId) return null;
-    const master = this._master(entry);
-    const inGroup = (master?.groups || []).some((g) => (st.groups || []).includes(g.id) && g.members.includes(lightId));
-    return (st.lights || []).includes(lightId) || inGroup;
+    const profiles = st.profiles || [];
+    const own = profiles.find((p) => (p.lights || []).includes(lightId));
+    if (own) return own;
+    const group = (this._master(entry)?.groups || []).find((g) => g.members.includes(lightId));
+    return (group && profiles.find((p) => (p.groups || []).includes(group.id))) || false;
+  }
+
+  /** " · ☀" for a line: the circadian profile with that light, group or scene ("" without one); grey for a
+   * light set by hand (paused). */
+  _profileTag(entry, kind, id) {
+    const st = this._circadian[entry];
+    if (!st || st.failed || !id) return "";
+    const profile = kind === "lights" ? this._follows(entry, id) : (st.profiles || []).find((p) => (p[kind] || []).includes(id));
+    return profile ? ` · ${this._sunIcon(entry, kind === "lights" ? id : null, profile)}` : "";
+  }
+
+  /** The circadian icon: amber, or grey for a light set by hand (paused until switched off). */
+  _sunIcon(entry, lightId, profile) {
+    const paused = lightId && (this._circadian[entry]?.paused || []).includes(lightId);
+    const title = `Circadian profile: ${profile.name}${paused ? " (set by hand: paused until switched off)" : ""}`;
+    return `<ha-icon class="chip-sun ${paused ? "paused" : ""}" icon="mdi:weather-sunset" title="${esc(title)}"></ha-icon>`;
   }
 
   async _setCircadian(entry, fields) {
@@ -1322,16 +1369,9 @@ class NetroniPanel extends HTMLElement {
   }
 
   async _saveCircadian(entry) {
-    const value = (name) => this.shadowRoot.getElementById(`circadian-${name}-${entry}`)?.value ?? "";
-    const warmest = Number(value("warmest"));
-    const coolest = Number(value("coolest"));
-    if (!Number.isInteger(warmest) || !Number.isInteger(coolest) || warmest < 1000 || coolest > 10000 || warmest >= coolest) {
-      this._toast("Warmest and coolest: whole numbers in kelvin, 1000–10000, warmest below coolest");
-      return;
-    }
     // "Follow the sun of": Home Assistant's location, the app's, or a city (on the home clock).
-    const where = value("place");
-    const fields = { curve: value("curve"), warmest, coolest, warm_until: value("until"), place: where.startsWith("@") ? "" : where };
+    const where = this.shadowRoot.getElementById(`circadian-place-${entry}`)?.value ?? "";
+    const fields = { place: where.startsWith("@") ? "" : where };
     if (where === "@home_assistant" || where === "@app") fields.location_from = where.slice(1);
     if (await this._setCircadian(entry, fields)) this._toast("Circadian settings saved");
   }
@@ -1349,65 +1389,70 @@ class NetroniPanel extends HTMLElement {
     let line = "";
     if (status.enabled) {
       if (status.error) line = `Not running: ${esc(status.error)}.`;
-      else if (status.kelvin) {
+      else if (status.sunrise || status.sunset) {
         const where = status.place_name ? ` in ${esc(status.place_name)}` : "";
-        line = `Now <b>${status.kelvin} K</b>. Sunrise${where} ${esc(status.sunrise || "–")}, sunset ${esc(status.sunset || "after midnight")}.`;
-        if (!status.following) line += " No light follows yet.";
+        line = `Sunrise${where} ${esc(status.sunrise || "–")}, sunset ${esc(status.sunset || "after midnight")}.`;
+        if (!status.following) line += " No light follows a profile yet.";
         if (status.paused?.length) line += ` Set by hand, paused until switched off: ${status.paused.map((id) => esc(lightName(id))).join(", ")}.`;
       }
     }
     const option = (value, label, current) => `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
-    const curves = [["home", "Home"], ["office", "Office"], ["natural", "Natural"]];
     const places = [["@home_assistant", `Home location from Home Assistant${status.home_name ? ` (${status.home_name})` : ""}`],
       ["@app", "From App"], ...(status.places || []).map((p) => [p.key, p.name])];
     const followed = status.place || (status.location_from === "app" ? "@app" : "@home_assistant");
-    const following = master.lights.filter((l) => l.kind === "tunable_white" && this._follows(entry, l.id)).map((l) => l.id);
-    // Each light keeps the curve's value inside its own range: say where one can't follow it all the way.
-    const ranges = following.map((id) => master.lights.find((l) => l.id === id))
-      .filter((l) => l.min_kelvin && l.max_kelvin);
-    const limits = ranges.flatMap((l) => {
-      const parts = [];
-      if (l.min_kelvin > status.warmest) parts.push(`at night it stays at ${l.min_kelvin} K`);
-      if (l.max_kelvin < status.coolest) parts.push(`by day it goes no higher than ${l.max_kelvin} K`);
-      return parts.length ? [`${esc(lightName(l.id))} (${l.min_kelvin}–${l.max_kelvin} K): ${parts.join(", ")}.`] : [];
-    });
-    // A range they can all show: the warmest they share, and their shared coolest (Home: at most 4000 K).
-    let suggest = "";
-    if (ranges.length) {
-      const warm = Math.max(...ranges.map((l) => l.min_kelvin));
-      const shared = Math.min(...ranges.map((l) => l.max_kelvin));
-      const cool = status.curve === "home" ? Math.min(shared, 4000) : shared;
-      if (warm >= cool) suggest = "These lights share no colour range: each follows within its own.";
-      else if (warm !== status.warmest || cool !== status.coolest) {
-        suggest = `Suggested for these lights: ${warm}–${cool} K${status.curve === "home" && shared > 4000 ? " (they reach " + shared + " K; Home stays at 4000 K or below)" : ""}.
-          ${this._admin ? `<button class="link" data-action="circadian-suggest" data-entry="${entry}" data-warm="${warm}" data-cool="${cool}">Use it</button>` : ""}`;
-      }
-    }
+    const profiles = status.profiles || [];
     return `
       <h4>Circadian lighting</h4>
       <div class="set-row">
-        <div class="grow"><div>Circadian lighting</div><div class="sub">Changes the colour temperature of the chosen lights through the day, following the sun: cooler by day, warmer in the evening. Only the colour temperature: switching and brightness stay as they are. A colour temperature set by hand pauses a light until it is switched off.</div></div>
+        <div class="grow"><div>Circadian lighting</div><div class="sub">Changes the colour temperature and brightness of lights through the day, each following a profile. Never switches them on or off. What a profile sets, set by hand, pauses a light until it is switched off.</div></div>
         <label class="tw"><input type="checkbox" data-action="circadian-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
       </div>
       ${line ? `<div class="sub pad">${line}</div>` : ""}
       <div class="circadian-form">
         <div class="field-row">
-          <label class="field"><span>Curve</span><select id="circadian-curve-${entry}" ${lock}>${curves.map(([v, l]) => option(v, l, status.curve)).join("")}</select></label>
           <label class="field"><span>Follow the sun of</span><select id="circadian-place-${entry}" ${lock}>${places.map(([v, l]) => option(v, l, followed)).join("")}</select></label>
         </div>
-        <div class="sub pad" id="circadian-curve-help-${entry}">${esc(CURVE_HELP[status.curve] ?? "")}</div>
-        <div class="field-row">
-          <label class="field"><span>Warmest, at night (K)</span><input id="circadian-warmest-${entry}" type="number" step="10" value="${esc(status.warmest)}" ${lock}></label>
-          <label class="field"><span>Coolest, by day (K)</span><input id="circadian-coolest-${entry}" type="number" step="10" value="${esc(status.coolest)}" ${lock}></label>
-          <label class="field"><span>Evening light until (Home)</span><input id="circadian-until-${entry}" type="time" min="18:00" max="23:59" value="${esc(status.warm_until)}" ${lock || (status.curve === "home" ? "" : "disabled")}></label>
-        </div>
-        ${suggest ? `<div class="sub pad">${suggest}</div>` : ""}
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="circadian-save" data-entry="${entry}">Save</button></div>` : ""}
       </div>
-      <div class="set-row"><div class="grow"><div>Which lights follow</div><div class="sub">${
-        following.length ? `${following.map((id) => esc(lightName(id))).join(", ")}.` : "None yet."}
-        Choose per port in Installation: a tunable white port's colour range → <i>Follow circadian lighting</i>.</div>
-        ${limits.length ? `<div class="sub warn-text">${limits.join(" ")}</div>` : ""}</div></div>`;
+      <div class="set-row"><div class="grow"><div>Profiles</div><div class="sub">${profiles.length
+        ? profiles.map((p) => `${esc(p.name)} (${p.following} light${p.following === 1 ? "" : "s"})`).join(", ") + "."
+        : "None yet."}</div></div>
+        <button class="btn secondary" data-action="circadian-tab">Edit profiles</button></div>`;
+  }
+
+  /** The Circadian tab: each XP-Master's profiles, in its <netroni-circadian> (mounted after drawing). */
+  _circadianCard(master) {
+    const st = this._circadian[master.entry_id];
+    const where = st?.place_name ? ` · the sun of ${esc(st.place_name)}` : "";
+    const state = !st || st.failed ? "" : st.enabled ? (st.error ? ` · not running: ${esc(st.error)}` : ` · on${where}`) : " · off";
+    return `
+      <section class="card">
+        <div class="card-head">
+          <ha-icon class="head-icon" icon="mdi:weather-sunset"></ha-icon>
+          <div class="grow"><h2>Circadian profiles</h2><div class="sub">${esc(master.name)}${state}</div></div>
+        </div>
+        <div class="circ-host" data-entry="${esc(master.entry_id)}"></div>
+      </section>`;
+  }
+
+  _mountCircadian() {
+    for (const host of this.shadowRoot.querySelectorAll(".circ-host")) {
+      const entry = host.dataset.entry;
+      let editor = this._circEditors[entry];
+      if (!editor) {
+        editor = this._circEditors[entry] = document.createElement("netroni-circadian");
+        editor.onStatus = (status) => {
+          this._circadian[entry] = { ...status, places: this._circadian[entry]?.places, home_name: this._circadian[entry]?.home_name };
+          editor.status = this._circadian[entry];
+        };
+      }
+      editor.hass = this._hass;
+      editor.entry = entry;
+      editor.master = this._master(entry);
+      editor.admin = this._admin;
+      host.appendChild(editor);
+      if (editor.status !== this._circadian[entry]) editor.status = this._circadian[entry];
+    }
   }
 
   _relaySection(master) {
@@ -1432,7 +1477,7 @@ class NetroniPanel extends HTMLElement {
         </div>
         ${lines.length ? `<div class="sub pad">${lines.join(" ")}</div>` : ""}`;
     }
-    return `<h4>Remote access</h4>${body}`;
+    return `<h4>From outside the home</h4>${body}`;
   }
 
   async _setRelay(entry, enabled) {
@@ -1667,7 +1712,7 @@ class NetroniPanel extends HTMLElement {
     return master?.minis.find((m) => m.uid === uid)?.name || uid;
   }
 
-  // --- closed cards (Installation tab) ------------------------------------------------------
+  // --- closed cards (Overview tab) ------------------------------------------------------
 
   _masterKey(master) {
     return `master:${master.master_id}`;
@@ -1722,6 +1767,7 @@ class NetroniPanel extends HTMLElement {
   _renderMain() {
     const main = this.shadowRoot.getElementById("main");
     if (!main || !this._hass) return;
+    if (Object.values(this._circEditors).some((e) => e.dragging)) return; // a point being dragged: after it
     const scroll = this.shadowRoot.querySelector(".content")?.scrollTop;
     main.innerHTML = `
       <div class="toolbar">
@@ -1730,15 +1776,17 @@ class NetroniPanel extends HTMLElement {
         <div class="title">Netroni</div>
       </div>
       <div class="tabs">
-        ${this._tabButton("installation", "Installation")}
+        ${this._tabButton("installation", "Overview")}
         ${this._tabButton("groups", "Groups")}
         ${this._tabButton("scenes", "Scenes")}
+        ${this._xpMasters.length ? this._tabButton("circadian", "Circadian") : ""}
         ${this._xpMasters.length ? this._tabButton("matter", "Matter") : ""}
         ${this._localMasters().length ? this._tabButton("remote", "Remote Access") : ""}
         ${this._tabButton("settings", "Settings")}
         ${this._hasDmx || this._tab === "dmx" ? this._tabButton("dmx", "DMX Output") : ""}
       </div>
       <div class="content"><div class="inner">${this._body()}</div></div>`;
+    if (this._tab === "circadian") this._mountCircadian();
     if (scroll) this.shadowRoot.querySelector(".content").scrollTop = scroll;
     if (this._tab === "matter") this._updateCountdowns();
     if (this._focusMini && this._tab === "installation" && this._data) {
@@ -1771,6 +1819,7 @@ class NetroniPanel extends HTMLElement {
     if (this._tab === "remote") return this._localMasters().map((m) => this._remoteCard(m)).join("");
     if (this._tab === "groups") return this._data.masters.map((m) => this._groupsCard(m)).join("");
     if (this._tab === "scenes") return this._data.masters.map((m) => this._scenesCard(m)).join("");
+    if (this._tab === "circadian") return this._xpMasters.map((m) => this._circadianCard(m)).join("");
     if (this._tab === "dmx") return this._xpMasters.map((m) => this._dmxCard(m)).join("");
     if (this._tab === "settings") return this._data.masters.map((m) => this._settingsCard(m)).join("");
     const minis = this._data.masters.reduce((n, m) => n + m.minis.length, 0);
@@ -1890,7 +1939,7 @@ class NetroniPanel extends HTMLElement {
           <ha-icon class="head-icon mini-icon" icon="netroni:xp-mini"></ha-icon>
           <div class="grow fold" data-action="collapse" data-key="${esc(key)}">
             <h3>${esc(mini.name)}</h3>
-            <div class="sub">XP-Mini · ${esc(mini.uid)}${mini.hardware_uid && mini.hardware_uid !== mini.uid ? ` (unit ${esc(mini.hardware_uid)})` : ""}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
+            <div class="sub">XP-Mini · ${esc(mini.hardware_uid || mini.uid)}${mini.area ? ` · ${esc(mini.area)}` : ""}</div>
           </div>
           ${gear}
           ${this._chip(mini.online, "Online", "Offline")}
@@ -1939,8 +1988,8 @@ class NetroniPanel extends HTMLElement {
     const range = this._cctRange(master, mini, port);
     const custom = range[0] !== CCT_DEFAULT[0] || range[1] !== CCT_DEFAULT[1];
     const light = master.lights.find((l) => l.mini_uid === mini.uid && l.key === `port${port}t`);
-    const label = cctLabel(range) + (this._follows(master.entry_id, light?.id)
-      ? `<ha-icon class="chip-sun" icon="mdi:weather-sunset" title="Follows circadian lighting"></ha-icon>` : "");
+    const follows = this._follows(master.entry_id, light?.id);
+    const label = cctLabel(range) + (follows ? this._sunIcon(master.entry_id, light.id, follows) : "");
     return this._admin
       ? `<button class="range ${custom ? "custom" : ""}" data-action="cct" ${data} title="Colour range of the strip on Port ${port}">${label}</button>`
       : `<span class="range ${custom ? "custom" : ""}" title="Colour range of the strip on Port ${port}">${label}</span>`;
@@ -1976,7 +2025,7 @@ class NetroniPanel extends HTMLElement {
           title="${on ? "Turn off" : "Turn on"}"><ha-icon icon="${icon}"></ha-icon></button>
         <div class="light-text" data-action="more-info" data-entity="${esc(light.entity_id)}" title="Brightness and colour">
           <div class="light-name ${light.name ? "" : "unnamed"}">${esc(light.name || light.default_name)}</div>
-          <div class="light-sub">${tagOf(light)} · ${esc(light.area || "No area")} · ${state}</div>
+          <div class="light-sub">${tagOf(light)} · ${esc(light.area || "No area")} · ${state}${this._profileTag(master.entry_id, "lights", light.id)}</div>
           ${levelLine}${this._groupChip(master, light)}${this._sceneChips(master, light)}
         </div>
         ${edit}
@@ -2052,7 +2101,7 @@ class NetroniPanel extends HTMLElement {
         <div class="card-head">
           <ha-icon class="head-icon group-icon" icon="mdi:lightbulb-group-outline"></ha-icon>
           <div class="grow"><h3>${esc(group.name)}</h3>
-            <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""} · ${esc(group.area || "No area")}</div></div>
+            <div class="sub">Group · ${members.length} light${members.length === 1 ? "" : "s"}${minis > 1 ? ` on ${minis} XP-Minis` : ""} · ${esc(group.area || "No area")}${this._profileTag(master.entry_id, "groups", group.id)}</div></div>
           ${edit}
         </div>
         <div class="grow-row group-level ${on ? "on" : partly ? "partly" : ""}">
@@ -2227,10 +2276,16 @@ class NetroniPanel extends HTMLElement {
     return `linear-gradient(90deg, ${stops.join(", ")})`;
   }
 
-  /** A scene's transitions: "start 3 s · end 0.5 s", the one it has, or none. */
-  _transitionText(start, end) {
-    const text = (label, ms) => (ms ? [`${label} ${+(ms / 1000).toFixed(3)} s`] : []);
-    return [...text("start", start), ...text("end", end)].join(" · ") || "no transition";
+  /** A scene's transitions as marks, as the apps show them: a ramp up and its seconds (start), a ramp
+   * down and its seconds (end); none without. */
+  _transitionMarks(start, end) {
+    const mark = (label, path, ms) => {
+      if (!ms) return [];
+      const s = +(ms / 1000).toFixed(3);
+      const tip = `${label} transition ${s} second${s === 1 ? "" : "s"}`;
+      return [`<span class="ramp" title="${tip}" aria-label="${tip}" role="img"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg> ${s} s</span>`];
+    };
+    return [...mark("Start", RAMP_UP, start), ...mark("End", RAMP_DOWN, end)];
   }
 
   _sceneCard(master, scene) {
@@ -2257,13 +2312,16 @@ class NetroniPanel extends HTMLElement {
     const triggers = (master.packs || []).flatMap((p) => p.inputs
       .filter((i) => [i.action, i.mode === "toggle" ? i.action_off : null].some((a) => a?.kind?.startsWith("scene") && a.scene_id === scene.id))
       .map((i) => i.name || `${this._packName(p)} input ${i.input}`));
-    const trigger = triggers.length ? ` · Button${triggers.length > 1 ? "s" : ""}: ${esc(triggers.join(", "))}` : "";
+    const tip = `Button${triggers.length > 1 ? "s" : ""}: ${triggers.join(", ")}`;
+    const marks = [`Scene · ${parts}`, ...this._transitionMarks(scene.transition, scene.transition_end),
+      ...(triggers.length ? [`<ha-icon class="chip-pack" icon="mdi:light-switch" title="${esc(tip)}" aria-label="${esc(tip)}"></ha-icon>`] : [])]
+      .join(" · ");
     return `
       <section class="card scene-card ${this._gotoScene === `${master.entry_id}|${scene.id}` ? "target" : ""}" id="scene-${master.entry_id}-${esc(scene.id)}">
         <div class="card-head">
           <ha-icon class="head-icon" icon="mdi:palette-outline"></ha-icon>
           <div class="grow"><h3>${esc(scene.name)}</h3>
-            <div class="sub">Scene · ${parts} · ${this._transitionText(scene.transition, scene.transition_end)}${trigger}</div></div>
+            <div class="sub">${marks}${this._profileTag(master.entry_id, "scenes", scene.id)}</div></div>
           <button class="btn" data-action="recall-scene" data-entity="${esc(scene.entity_id || "")}" ${scene.entity_id && master.connected ? "" : "disabled"}>Recall</button>
           ${edit}
         </div>
@@ -2300,6 +2358,7 @@ class NetroniPanel extends HTMLElement {
           </div>
         </div>
         ${body}
+        ${this._xpMasters.includes(master) ? this._relaySection(master) : ""}
       </section>`;
   }
 
@@ -2453,7 +2512,8 @@ class NetroniPanel extends HTMLElement {
           <select id="light-area" ${this._busy ? "disabled" : ""}>
             <option value="">No area</option>
             ${areas.map((a) => `<option value="${esc(a.area_id)}" ${a.area_id === current ? "selected" : ""}>${esc(a.name)}</option>`).join("")}
-          </select></label>`;
+          </select></label>
+        ${this._profileChoice(d.entry, d.light.id, d.light.kind)}`;
       action = `<button class="btn" data-action="save-light" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "group") {
       const master = this._master(d.entry);
@@ -2576,15 +2636,7 @@ class NetroniPanel extends HTMLElement {
         <div class="cct-bar" id="cct-bar" style="background: ${this._cctGradient(d.warm, d.cool)}"></div>
         <div class="cct-labels" id="cct-labels">${this._cctLabels(d.warm, d.cool)}</div>
         <p class="sub">Home Assistant, Matter and the XP-Mini use this range for this light. A colour temperature outside the new range moves to its nearest end.</p>`;
-      if (d.follows !== null && d.follows !== undefined) {
-        const st = this._circadian[d.entry];
-        body += `
-        <div class="set-row">
-          <div class="grow"><div>Follow circadian lighting</div><div class="sub">The XP-Master changes its colour temperature through the day.
-            ${st.enabled ? "" : "Circadian lighting is off: turn it on in Settings."}</div></div>
-          <label class="tw"><input type="checkbox" id="cct-circadian" ${d.follows ? "checked" : ""} ${this._busy ? "disabled" : ""}><span class="switch"></span></label>
-        </div>`;
-      }
+      body += this._profileChoice(d.entry, d.light, "tunable_white");
       action = `<button class="btn" data-action="save-cct" ${this._busy ? "disabled" : ""}>Save</button>`;
     } else if (d.kind === "pairs") {
       const mini = this._mini(d.entry, d.uid);
@@ -2753,7 +2805,11 @@ const STYLE = `
   .circadian-form .field { min-width: 180px; }
   .circadian-form .actions { margin: 16px 0 14px; }
   .circadian-form .link { font: inherit; color: var(--primary-color); background: none; border: 0; padding: 0 0 0 4px; cursor: pointer; }
-  .chip-sun { --mdc-icon-size: 15px; display: inline-flex; color: var(--warning-color, #f0a400); }
+  .chip-sun { --mdc-icon-size: 15px; display: inline-flex; vertical-align: -3px; color: var(--warning-color, #f0a400); }
+  .chip-sun.paused { color: var(--disabled-text-color, #9e9e9e); }
+  .chip-pack { --mdc-icon-size: 15px; display: inline-flex; vertical-align: -3px; color: var(--primary-color); }
+  .ramp { white-space: nowrap; }
+  .ramp svg { width: 15px; height: 15px; vertical-align: -3px; fill: currentColor; }
   .mqtt-form .field-row { flex-wrap: wrap; }
   .mqtt-form .field { min-width: 220px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; flex: none; }

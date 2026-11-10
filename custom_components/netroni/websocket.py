@@ -66,6 +66,9 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_sacn_set,
         ws_circadian_status,
         ws_circadian_set,
+        ws_circadian_profile_set,
+        ws_circadian_profile_delete,
+        ws_circadian_shape,
         ws_relay_status,
         ws_relay_set,
         ws_update_channel,
@@ -856,14 +859,8 @@ async def ws_circadian_status(hass: HomeAssistant, connection: websocket_api.Act
         vol.Required("type"): "netroni/circadian_set",
         vol.Required("entry_id"): str,
         vol.Optional("enabled"): bool,
-        vol.Optional("curve"): vol.In(["home", "office", "natural"]),
-        vol.Optional("warmest"): vol.All(int, vol.Range(min=1000, max=10000)),
-        vol.Optional("coolest"): vol.All(int, vol.Range(min=1000, max=10000)),
-        vol.Optional("warm_until"): str,
         vol.Optional("location_from"): vol.In(["home_assistant", "app"]),
         vol.Optional("place"): str,
-        vol.Optional("groups"): [str],
-        vol.Optional("lights"): [str],
     }
 )
 @websocket_api.async_response
@@ -871,8 +868,7 @@ async def ws_circadian_set(hass: HomeAssistant, connection: websocket_api.Active
     """Circadian's settings, in use at once; the new status. The home location and time zone: Home
     Assistant's own (Settings > System > General) while location_from is "home_assistant"; with "app",
     a phone's, which this never overwrites."""
-    fields = {k: msg[k] for k in ("enabled", "curve", "warmest", "coolest", "warm_until", "location_from", "place",
-                                  "groups", "lights") if k in msg}
+    fields = {k: msg[k] for k in ("enabled", "location_from", "place") if k in msg}
     client = _hub(hass, msg["entry_id"]).client
     try:
         location_from = fields.get("location_from") or (await client.call("circadian/get")).get("location_from")
@@ -884,6 +880,62 @@ async def ws_circadian_set(hass: HomeAssistant, connection: websocket_api.Active
         _error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"], {**status, "home_name": hass.config.location_name})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/circadian_profile_set", vol.Required("entry_id"): str, vol.Required("profile"): dict}
+)
+@websocket_api.async_response
+async def ws_circadian_profile_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """A circadian profile, new (no id) or changed, whole (the XP-Master checks it); the new status."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("circadian/profile/set", profile=msg["profile"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {**status, "home_name": hass.config.location_name})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/circadian_profile_delete", vol.Required("entry_id"): str, vol.Required("profile_id"): str}
+)
+@websocket_api.async_response
+async def ws_circadian_profile_delete(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("circadian/profile/delete", profile_id=msg["profile_id"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], {**status, "home_name": hass.config.location_name})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/circadian_shape",
+        vol.Required("entry_id"): str,
+        vol.Required("shape"): vol.In(["home", "office", "natural"]),
+        vol.Optional("mode", default="smooth"): vol.In(["smooth", "steps", "seasons"]),
+        vol.Optional("warmest", default=2200): vol.All(int, vol.Range(min=1000, max=6500)),
+        vol.Optional("coolest", default=4000): vol.All(int, vol.Range(min=1000, max=6500)),
+        vol.Optional("before"): vol.All(int, vol.Range(min=0, max=180)),
+        vol.Optional("after"): vol.All(int, vol.Range(min=0, max=240)),
+    }
+)
+@websocket_api.async_response
+async def ws_circadian_shape(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """A colour temperature curve of a shape, from the location's sunrise and sunset (with the profile's day
+    start and end, before and after, from sunrise - before to sunset + after): {points}."""
+    window = {key: msg[key] for key in ("before", "after") if key in msg}
+    try:
+        result = await _hub(hass, msg["entry_id"]).client.call(
+            "circadian/shape", shape=msg["shape"], mode=msg["mode"], warmest=msg["warmest"], coolest=msg["coolest"],
+            **window)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "netroni/relay_status", vol.Required("entry_id"): str})
