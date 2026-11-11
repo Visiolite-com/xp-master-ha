@@ -581,6 +581,9 @@ class NetroniPanel extends HTMLElement {
       case "knx-addresses-save":
         this._saveKnxAddresses(d.entry, d.kind, d.id);
         break;
+      case "knx-addresses-clear":
+        this._saveKnxAddresses(d.entry, d.kind, d.id, true);
+        break;
       case "control-save":
         this._saveControl(d.entry);
         break;
@@ -1269,11 +1272,12 @@ class NetroniPanel extends HTMLElement {
     this._renderMain();
   }
 
-  async _saveKnxAddresses(entry, kind, id) {
+  /** One thing's addresses saved as typed, or (clear) all of them removed: it is then off KNX. */
+  async _saveKnxAddresses(entry, kind, id, clear = false) {
     const form = this.shadowRoot.querySelector(`.knx-edit[data-key="${CSS.escape(`${kind}|${id}`)}"]`);
     if (!form) return;
     const addresses = {};
-    form.querySelectorAll("input[data-function]").forEach((el) => {
+    if (!clear) form.querySelectorAll("input[data-function]").forEach((el) => {
       const v = el.value.trim();
       if (!v) return;
       addresses[el.dataset.function] = el.dataset.function === "number" ? Number(v) : v;
@@ -1281,7 +1285,7 @@ class NetroniPanel extends HTMLElement {
     try {
       this._knx[entry] = await this._call({ type: "netroni/knx_set_addresses", entry_id: entry, kind, thing: id, addresses });
       this._knxEdit = null;
-      this._toast("KNX addresses saved");
+      this._toast(clear ? "KNX addresses cleared" : "KNX addresses saved");
     } catch {}
     this._renderMain();
   }
@@ -1330,11 +1334,15 @@ class NetroniPanel extends HTMLElement {
             <input id="knx-gateway-${entry}" value="${esc(status.gateway)}" placeholder="e.g. 192.168.1.30" autocomplete="off" ${lock}></label>
         </div>
         <div class="field-row">
-          <label class="field"><span>Individual address (optional)</span>
-            <input id="knx-address-${entry}" value="${esc(status.individual_address)}" placeholder="the interface's choice" autocomplete="off" ${lock}></label>
+          <label class="field"><span>Individual address on KNX (optional)</span>
+            <input id="knx-address-${entry}" value="${esc(status.individual_address)}" placeholder="e.g. 1.1.250" autocomplete="off" ${lock}></label>
           <label class="field"><span>Scene address (KNX scene numbers)</span>
             <input id="knx-scenes-${entry}" value="${esc(status.scene_address)}" placeholder="e.g. 1/7/0" autocomplete="off" ${lock}></label>
         </div>
+        <div class="knx-help"><ha-icon icon="mdi:information-outline"></ha-icon>
+          <div><b>Individual address:</b> the XP-Master's own address on the KNX bus, like 1.1.250. With tunnelling, leave it empty and the interface picks one; fill it in only if the ETS project reserves a tunnel for the XP-Master. With routing, give it a free address on the line.</div></div>
+        <div class="knx-help"><ha-icon icon="mdi:information-outline"></ha-icon>
+          <div><b>Why a scene address?</b> KNX buttons and visualisations usually recall scenes by number (1 to 64), all sent to one shared address. The XP-Master listens there and recalls the scene with that number; each scene's number is shown in its row under Group addresses. Without it, KNX can still turn a scene on or off through the scene's own address.</div></div>
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="knx-save" data-entry="${entry}">Save</button></div>` : ""}
       </div>
       ${this._knxAddresses(master, status)}`;
@@ -1439,7 +1447,9 @@ class NetroniPanel extends HTMLElement {
           <label class="field"><span>${KNX_LABELS[f]}</span><input data-function="${f}" value="${esc(have[f] ?? "")}"
             placeholder="${f === "number" ? "1-64" : "e.g. 1/0/1"}" autocomplete="off" spellcheck="false"></label>`).join("")}</div>
         <div class="actions left"><button class="btn small" data-action="knx-addresses-save" data-entry="${entry}" data-kind="${kind}" data-id="${esc(id)}">Save</button>
-          <button class="btn secondary small" data-action="knx-addresses-edit" data-entry="${entry}" data-key="">Cancel</button></div>
+          <button class="btn secondary small" data-action="knx-addresses-edit" data-entry="${entry}" data-key="">Cancel</button>
+          ${Object.keys(have).length ? `<button class="btn secondary small knx-clear knx-clear-one" data-action="knx-addresses-clear" data-entry="${entry}" data-kind="${kind}" data-id="${esc(id)}">
+            <ha-icon icon="mdi:eraser"></ha-icon>Clear</button>` : ""}</div>
       </div>` : "";
     return `
       <div class="knx-item ${editing ? "editing" : ""}">
@@ -3339,7 +3349,15 @@ const STYLE = `
   .knx-none { font-size: 12.5px; color: var(--secondary-text-color); opacity: .8; }
   .knx-edit-btn { width: 32px; height: 32px; --mdc-icon-size: 18px; }
   .knx-edit { padding: 2px 14px 14px 50px; }
-  .knx-edit .actions { margin-top: 14px; }
+  .knx-edit .actions { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .knx-edit .knx-clear-one { margin-left: auto; color: var(--bad); display: inline-flex; align-items: center; gap: 5px; }
+  .knx-clear-one ha-icon { --mdc-icon-size: 16px; }
+  .knx-help + .knx-help { margin-top: 6px; }
+  .knx-help { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 4px; padding: 10px 12px; border-radius: 12px;
+    font-size: 12.5px; line-height: 1.5; color: var(--secondary-text-color);
+    background: color-mix(in srgb, var(--primary-color) 6%, transparent); }
+  .knx-help ha-icon { --mdc-icon-size: 18px; flex: none; color: var(--primary-color); margin-top: 1px; }
+  .knx-help b { color: var(--primary-text-color); font-weight: 600; }
   .knx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); column-gap: 12px; }
   .knx-grid .field { margin-top: 10px; }
   .knx-grid .field input { font-family: var(--code-font-family, ui-monospace, monospace); }
