@@ -26,6 +26,30 @@ const RAMP_DOWN = "M2 5H8.6L16.6 17H22V19.4H15.4L7.4 7.4H2Z";
 const SUN_PATH = "M11 4h2v3h-2zM2 18h20v2H2zM5 16h14c0-3.87-3.13-7-7-7S5 12.13 5 16zM16.96 8.66l2.12-2.12 1.41 1.41-2.12 2.13zM3.54 7.92l1.42-1.41 2.12 2.12-1.42 1.42z";
 const sunSvg = (cls, title = "") =>
   `<svg class="${cls} svg-icon" viewBox="0 0 24 24" ${title ? `role="img" aria-label="${title}"><title>${title}</title>` : 'aria-hidden="true">'}<path d="${SUN_PATH}"/></svg>`;
+// KNX (xp-master docs/knx.md): the usual address layout (a middle group per function), and how each
+// function is called and tagged on its address chips.
+const KNX_LAYOUT = { switch: 0, switch_state: 1, brightness: 2, brightness_state: 3, dim: 4, kelvin: 5, kelvin_state: 6, scenes: 7 };
+const KNX_LAYOUT_ROWS = [
+  ["switch", "Switch", "mdi:power", ""],
+  ["switch_state", "Switch status", "mdi:power", "back to KNX"],
+  ["brightness", "Brightness · level", "mdi:brightness-6", ""],
+  ["brightness_state", "Brightness · level status", "mdi:brightness-6", "back to KNX"],
+  ["dim", "Dimming", "mdi:gesture-tap-hold", "while a button is held"],
+  ["kelvin", "Colour temperature", "mdi:thermometer", "tunable white"],
+  ["kelvin_state", "Colour temperature status", "mdi:thermometer", "back to KNX"],
+  ["scenes", "Scene on / off", "mdi:palette-outline", "each scene its own"],
+];
+const KNX_FUNCTIONS = {
+  lights: (l) => ["switch", "switch_state", "brightness", "brightness_state", "dim", ...(l?.kind === "tunable_white" ? ["kelvin", "kelvin_state"] : [])],
+  groups: () => ["switch", "switch_state", "level", "level_state", "dim"],
+  scenes: () => ["number", "switch"],
+  circadian: () => ["switch", "switch_state"],
+};
+const KNX_LABELS = { switch: "Switch", switch_state: "Switch status", brightness: "Brightness", brightness_state: "Brightness status",
+  dim: "Dimming (hold)", kelvin: "Colour temperature", kelvin_state: "Colour temperature status", level: "Level",
+  level_state: "Level status", number: "KNX scene number (1-64)" };
+const KNX_SHORT = { switch: "On/off", switch_state: "On/off", brightness: "%", brightness_state: "%", level: "%", level_state: "%",
+  dim: "Hold", kelvin: "K", kelvin_state: "K", number: "Scene" };
 const DMX_POLL_MS = 250;
 const DMX_SLOTS = 512;
 const DMX_ROW = 16; // channels per line of the DMX monitor: an 8-bit block, or half a 16-bit one
@@ -95,6 +119,10 @@ class NetroniPanel extends HTMLElement {
     this._artnet = {}; // entry_id -> netroni/artnet_status result, or {failed}
     this._mqtt = {}; // entry_id -> netroni/mqtt_status result, or {failed}
     this._control = {}; // entry_id -> netroni/control_status result, or {failed}
+    this._knx = {}; // entry_id -> netroni/knx_status result, or {failed}
+    this._knxScan = {}; // entry_id -> {scanning} | {gateways} | {failed}: the last search
+    this._knxEdit = null; // "entry|kind|id" whose KNX addresses are open for editing
+    this._knxTool = {}; // entry_id -> {main, middles, replace}: the address layout tool, as typed
     this._sacn = {}; // entry_id -> netroni/sacn_status result, or {failed}
     this._circadian = {}; // entry_id -> netroni/circadian_status result, or {failed}
     this._circEditors = {}; // entry_id -> its <netroni-circadian>, kept across redraws
@@ -119,6 +147,29 @@ class NetroniPanel extends HTMLElement {
         if (ev.target.dataset?.action === "scene-brightness") {
           const pct = this.shadowRoot.querySelector(`[data-pct="${CSS.escape(ev.target.dataset.key)}"]`);
           if (pct) pct.textContent = `${Math.round((Number(ev.target.value) / 255) * 100)} %`;
+        }
+        return;
+      }
+      const knxAction = ev.target.dataset?.action;
+      if (knxAction === "knx-main" || knxAction === "knx-middle") {
+        const entry = ev.target.dataset.entry;
+        const tool = this._knxTool[entry];
+        if (!tool) return;
+        const value = ev.target.value === "" ? "" : Number(ev.target.value);
+        if (knxAction === "knx-main") {
+          tool.main = value;
+          this.shadowRoot.querySelectorAll(`[data-main="${CSS.escape(entry)}"]`).forEach((el) => (el.textContent = value === "" ? "–" : value));
+        } else {
+          tool.middles[ev.target.dataset.function] = value;
+          if (ev.target.dataset.function === "scenes") {
+            const el = this.shadowRoot.querySelector(`[data-scene-middle="${CSS.escape(entry)}"]`);
+            if (el) el.textContent = value === "" ? "–" : value;
+          }
+          const values = Object.values(tool.middles);
+          this.shadowRoot.querySelectorAll(`.knx-seg.edit[data-entry="${CSS.escape(entry)}"]`).forEach((el) => {
+            const v = el.value === "" ? NaN : Number(el.value);
+            el.classList.toggle("bad", !(Number.isInteger(v) && v >= 0 && v <= 7) || values.filter((x) => x === v).length > 1);
+          });
         }
         return;
       }
@@ -500,6 +551,36 @@ class NetroniPanel extends HTMLElement {
         this._renderMain();
         this._loadCircadian(true);
         break;
+      case "knx-save":
+        this._saveKnx(d.entry);
+        break;
+      case "knx-scan":
+        this._scanKnx(d.entry);
+        break;
+      case "knx-pick":
+        this._pickKnxGateway(d.entry, d.index);
+        break;
+      case "knx-addresses-edit":
+        this._knxEdit = d.key ? `${d.entry}|${d.key}` : null;
+        this._renderMain();
+        break;
+      case "knx-fill":
+        this._fillKnx(d.entry);
+        break;
+      case "knx-main-step": {
+        const tool = this._knxTool[d.entry];
+        if (!tool) break;
+        const now = Number.isInteger(tool.main) ? tool.main : 1;
+        tool.main = Math.min(31, Math.max(0, now + Number(d.dir)));
+        this._renderMain();
+        break;
+      }
+      case "knx-clear":
+        this._clearKnx(d.entry);
+        break;
+      case "knx-addresses-save":
+        this._saveKnxAddresses(d.entry, d.kind, d.id);
+        break;
       case "control-save":
         this._saveControl(d.entry);
         break;
@@ -626,6 +707,15 @@ class NetroniPanel extends HTMLElement {
       this._dmxPct = el.value === "pct";
       this._updateDmx();
       return;
+    }
+    if (el.dataset?.action === "knx-replace") {
+      const tool = this._knxTool[el.dataset.entry];
+      if (tool) tool.replace = el.checked;
+      this._renderMain();
+      return;
+    }
+    if (el.dataset?.action === "knx-enabled") {
+      this._setKnx(el.dataset.entry, { enabled: el.checked });
     }
     if (el.dataset?.action === "control-enabled") {
       this._setControl(el.dataset.entry, { enabled: el.checked });
@@ -1034,7 +1124,7 @@ class NetroniPanel extends HTMLElement {
   async _refreshArtnet() {
     let changed = false;
     for (const master of this._xpMasters) {
-      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._control, "netroni/control_status"], [this._circadian, "netroni/circadian_status"]]) {
+      for (const [store, type] of [[this._artnet, "netroni/artnet_status"], [this._sacn, "netroni/sacn_status"], [this._mqtt, "netroni/mqtt_status"], [this._control, "netroni/control_status"], [this._knx, "netroni/knx_status"], [this._circadian, "netroni/circadian_status"]]) {
         let status;
         try {
           status = await this._hass.callWS({ type, entry_id: master.entry_id });
@@ -1048,7 +1138,7 @@ class NetroniPanel extends HTMLElement {
       }
     }
     // Not while an MQTT or circadian field is being typed in: drawing again would lose it.
-    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form, .control-form, .circadian-form");
+    const typing = this.shadowRoot.activeElement?.closest?.(".mqtt-form, .control-form, .knx-form, .knx-edit, .knx-layout, .circadian-form");
     if (changed && this._tab === "settings" && !typing) this._renderMain();
   }
 
@@ -1099,6 +1189,267 @@ class NetroniPanel extends HTMLElement {
         <div class="field-row">${field("client", "Client ID", status.client_id, status.client_id_used)}<div class="field"></div></div>
         ${this._admin ? `<div class="actions left"><button class="btn" data-action="mqtt-save" data-entry="${entry}">Save</button>
           ${status.password_set ? `<button class="btn secondary" data-action="mqtt-clear-password" data-entry="${entry}">Remove password</button>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  async _setKnx(entry, fields) {
+    try {
+      this._knx[entry] = await this._call({ type: "netroni/knx_set", entry_id: entry, ...fields });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._renderMain();
+    }
+  }
+
+  async _saveKnx(entry) {
+    const value = (name) => this.shadowRoot.getElementById(`knx-${name}-${entry}`)?.value.trim() ?? "";
+    const fields = { connection: value("connection"), gateway: value("gateway"), individual_address: value("address"),
+      scene_address: value("scenes") };
+    if (await this._setKnx(entry, fields)) this._toast("KNX settings saved");
+  }
+
+  async _scanKnx(entry) {
+    this._knxScan[entry] = { scanning: true };
+    this._renderMain();
+    try {
+      const { gateways } = await this._call({ type: "netroni/knx_scan", entry_id: entry });
+      this._knxScan[entry] = { gateways };
+    } catch (err) {
+      this._knxScan[entry] = { failed: err.message || String(err) };
+    }
+    this._renderMain();
+  }
+
+  /** A KNX IP interface found by the search: its address in the form (tunnelling, or routing if that is all it does). */
+  _pickKnxGateway(entry, index) {
+    const g = this._knxScan[entry]?.gateways?.[Number(index)];
+    if (!g) return;
+    const set = (name, v) => { const el = this.shadowRoot.getElementById(`knx-${name}-${entry}`); if (el) el.value = v; };
+    const connection = g.tunneling_tcp ? "tunneling_tcp" : g.tunneling ? "tunneling" : "routing";
+    set("connection", connection);
+    set("gateway", connection === "routing" ? "" : g.port && g.port !== 3671 ? `${g.address}:${g.port}` : g.address);
+    this._toast(`${g.name}: press Save to use it`);
+  }
+
+  async _fillKnx(entry) {
+    const tool = this._knxTool[entry];
+    if (!tool) return;
+    const { main, middles, replace } = tool;
+    if (!Number.isInteger(main) || main < 0 || main > 31) {
+      this._toast("The main group is a number from 0 to 31");
+      return;
+    }
+    const values = Object.values(middles);
+    if (values.some((v) => !Number.isInteger(v) || v < 0 || v > 7) || new Set(values).size !== values.length) {
+      this._toast("Give each function its own middle group, from 0 to 7");
+      return;
+    }
+    const status = this._knx[entry];
+    const count = (st) => ["lights", "groups", "scenes"].reduce((n, k) => n + Object.keys(st?.[k] || {}).length, 0);
+    if (replace && count(status) && !confirm("Replace the group addresses of every light, group and scene with this layout? The ones set now are dropped.")) return;
+    try {
+      this._knx[entry] = await this._call({ type: "netroni/knx_fill", entry_id: entry, main, middles, replace_all: replace });
+      const added = count(this._knx[entry]) - (replace ? 0 : count(status));
+      this._toast(replace ? `Group addresses set for ${added} lights, groups and scenes`
+        : added ? `Group addresses filled in for ${added} more` : "Everything has group addresses already");
+      tool.replace = false;
+    } catch {}
+    this._renderMain();
+  }
+
+  async _clearKnx(entry) {
+    if (!confirm("Remove every KNX group address? KNX can no longer control these lights until they get addresses again.")) return;
+    try {
+      this._knx[entry] = await this._call({ type: "netroni/knx_clear", entry_id: entry });
+      this._knxEdit = null;
+      this._toast("All KNX group addresses removed");
+    } catch {}
+    this._renderMain();
+  }
+
+  async _saveKnxAddresses(entry, kind, id) {
+    const form = this.shadowRoot.querySelector(`.knx-edit[data-key="${CSS.escape(`${kind}|${id}`)}"]`);
+    if (!form) return;
+    const addresses = {};
+    form.querySelectorAll("input[data-function]").forEach((el) => {
+      const v = el.value.trim();
+      if (!v) return;
+      addresses[el.dataset.function] = el.dataset.function === "number" ? Number(v) : v;
+    });
+    try {
+      this._knx[entry] = await this._call({ type: "netroni/knx_set_addresses", entry_id: entry, kind, thing: id, addresses });
+      this._knxEdit = null;
+      this._toast("KNX addresses saved");
+    } catch {}
+    this._renderMain();
+  }
+
+  /** KNX: the XP-Master on a KNX installation through its KNX IP interface (xp-master docs/knx.md). */
+  _knxSection(master) {
+    const entry = master.entry_id;
+    const status = this._knx[entry];
+    if (!status) return `<h4>KNX</h4><div class="empty small">Loading…</div>`;
+    if (status.failed) return `<h4>KNX</h4>${this._banner("warn", "mdi:alert-outline", `KNX settings could not be read: ${esc(status.failed)}`)}`;
+    const lock = this._admin ? "" : "disabled";
+    let line = "";
+    if (status.enabled) {
+      line = status.connected
+        ? `Connected${status.gateway_used ? ` to <b>${esc(status.gateway_used)}</b>` : ""} as <b>${esc(status.individual_address_used || "?")}</b>. ${status.telegrams_in} telegrams in, ${status.telegrams_out} out.`
+        : `Not connected${status.error ? `: ${esc(status.error)}` : ""}. The XP-Master keeps trying in the background.`;
+    }
+    const option = (v, label) => `<option value="${v}" ${status.connection === v ? "selected" : ""}>${label}</option>`;
+    const scan = this._knxScan[entry];
+    let found = "";
+    if (scan?.scanning) found = `<div class="sub pad">Searching…</div>`;
+    else if (scan?.failed) found = `<div class="sub pad">Search failed: ${esc(scan.failed)}</div>`;
+    else if (scan?.gateways) {
+      found = scan.gateways.length
+        ? `<div class="knx-found">${scan.gateways.map((g, i) => `
+            <div class="set-row"><div class="grow"><div>${esc(g.name)}</div>
+              <div class="sub">${esc(g.address)} · ${[g.tunneling_tcp || g.tunneling ? "tunnelling" : "", g.routing ? "routing" : "", g.secure ? "secure" : ""].filter(Boolean).join(", ")}${g.individual_address ? ` · ${esc(g.individual_address)}` : ""}</div></div>
+              ${this._admin ? `<button class="btn secondary small" data-action="knx-pick" data-entry="${entry}" data-index="${i}">Use</button>` : ""}</div>`).join("")}</div>`
+        : `<div class="sub pad">No KNX IP interface or router answered. Enter its address below.</div>`;
+    }
+    return `
+      <h4>KNX</h4>
+      <div class="set-row">
+        <div class="grow"><div>KNX</div><div class="sub">Lets KNX wall switches, presence sensors and visualisations control the lights, groups and scenes, and shows their state on KNX. Connects through the building's KNX IP interface or router.</div></div>
+        <label class="tw"><input type="checkbox" data-action="knx-enabled" data-entry="${entry}" ${status.enabled ? "checked" : ""} ${lock}><span class="switch"></span></label>
+      </div>
+      ${line ? `<div class="sub pad">${line}</div>` : ""}
+      <div class="knx-form">
+        ${this._admin ? `<div class="actions left"><button class="btn secondary" data-action="knx-scan" data-entry="${entry}" ${scan?.scanning ? "disabled" : ""}>Search the network</button></div>` : ""}
+        ${found}
+        <div class="field-row">
+          <label class="field"><span>Connection</span><select id="knx-connection-${entry}" ${lock}>
+            ${option("automatic", "Automatic (the first one found)")}${option("tunneling", "Tunnelling (UDP)")}${option("tunneling_tcp", "Tunnelling (TCP)")}${option("routing", "Routing (multicast)")}
+          </select></label>
+          <label class="field"><span>KNX IP interface (for tunnelling)</span>
+            <input id="knx-gateway-${entry}" value="${esc(status.gateway)}" placeholder="e.g. 192.168.1.30" autocomplete="off" ${lock}></label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>Individual address (optional)</span>
+            <input id="knx-address-${entry}" value="${esc(status.individual_address)}" placeholder="the interface's choice" autocomplete="off" ${lock}></label>
+          <label class="field"><span>Scene address (KNX scene numbers)</span>
+            <input id="knx-scenes-${entry}" value="${esc(status.scene_address)}" placeholder="e.g. 1/7/0" autocomplete="off" ${lock}></label>
+        </div>
+        ${this._admin ? `<div class="actions left"><button class="btn" data-action="knx-save" data-entry="${entry}">Save</button></div>` : ""}
+      </div>
+      ${this._knxAddresses(master, status)}`;
+  }
+
+  /** The group addresses of each light, group and scene, and circadian, with the layout tool on top. */
+  _knxAddresses(master, status) {
+    const entry = master.entry_id;
+    const key = `open:${entry}/knx-addresses`;
+    const open = this._collapsed.has(key);
+    const total = (master.lights || []).length + (master.groups || []).length + (master.scenes || []).length;
+    const done = ["lights", "groups", "scenes"].reduce((n, k) => n + Object.keys(status[k] || {}).length, 0);
+    const head = `
+      <div class="fold-head fold knx-head" data-action="collapse" data-key="${esc(key)}" role="button" aria-expanded="${open}">
+        <ha-icon class="fold-chevron" icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon>
+        <div class="grow"><div class="fold-title">Group addresses</div>
+          <div class="sub">${done ? `${done} of ${total} on KNX` : "None yet"}</div></div>
+        <div class="knx-meter" aria-hidden="true"><span style="width:${total ? Math.round((done / total) * 100) : 0}%"></span></div>
+      </div>`;
+    if (!open) return `<div class="knx-table">${head}</div>`;
+    const section = (title, icon, rows) => (rows.length ? `
+      <div class="knx-group-title">${icon === "sun" ? sunSvg("") : `<ha-icon icon="${icon}"></ha-icon>`}${title}<span>${rows.length}</span></div>
+      <div class="knx-list">${rows.join("")}</div>` : "");
+    const lights = (master.lights || []).map((l) => this._knxRow(master, status, "lights", l.id, l.name || l.default_name,
+      `${this._miniName(master, l.mini_uid)} · ${l.key.replace("port", "").toUpperCase()}`, l,
+      l.kind === "tunable_white" ? "mdi:lightbulb-auto-outline" : "mdi:lightbulb-outline"));
+    const groups = (master.groups || []).map((g) => this._knxRow(master, status, "groups", g.id, g.name,
+      `${g.members?.length ?? 0} light${g.members?.length === 1 ? "" : "s"}`, g, "mdi:lightbulb-group-outline"));
+    const scenes = (master.scenes || []).map((s) => this._knxRow(master, status, "scenes", s.id, s.name, "", s, "mdi:palette-outline"));
+    const circadian = [this._knxRow(master, status, "circadian", "", "Circadian lighting", "On / off for the whole installation", null, "sun")];
+    return `
+      <div class="knx-table">${head}
+        <p class="knx-intro">Each light, group and scene listens to the KNX group addresses below, as set in the ETS project. Status addresses tell KNX what changed.</p>
+        <div class="knx-legend"><span class="knx-chip"><em>On/off</em>control</span><span>KNX → Netroni</span>
+          <span class="knx-chip state"><em>On/off</em>status</span><span>Netroni → KNX</span></div>
+        ${this._admin ? this._knxLayoutTool(entry, status) : ""}
+        ${section("Lights", "mdi:lightbulb-outline", lights)}
+        ${section("Groups", "mdi:lightbulb-group-outline", groups)}
+        ${section("Scenes", "mdi:palette-outline", scenes)}
+        ${section("Circadian", "sun", circadian)}
+      </div>`;
+  }
+
+  /** The layout tool: a main group, a middle group per function, then fill in (or replace) or clear. */
+  _knxLayoutTool(entry, status) {
+    const tool = (this._knxTool[entry] ||= { main: 1, middles: { ...KNX_LAYOUT }, replace: false });
+    const rows = KNX_LAYOUT_ROWS.map(([fn, name, icon, note]) => `
+      <div class="knx-layout-row ${fn.endsWith("_state") ? "state" : ""}">
+        <ha-icon icon="${icon}"></ha-icon>
+        <div class="knx-layout-name">${name}${note ? `<small>${note}</small>` : ""}</div>
+        <div class="knx-addr" title="${esc(name)}">
+          <span class="knx-seg locked" data-main="${entry}">${tool.main}</span><i>/</i>
+          <input class="knx-seg edit" type="number" min="0" max="7" inputmode="numeric" aria-label="${esc(name)}: middle group"
+            data-action="knx-middle" data-entry="${entry}" data-function="${fn}" value="${tool.middles[fn]}"><i>/</i>
+          <span class="knx-seg n">n</span>
+        </div>
+      </div>`).join("");
+    const any = ["lights", "groups", "scenes"].some((k) => Object.keys(status[k] || {}).length) || Object.keys(status.circadian || {}).length;
+    return `
+      <div class="knx-layout">
+        <div class="knx-layout-side">
+          <div class="knx-layout-title">Address layout</div>
+          <p>One middle group per function, and the same number <b>n</b> for a light in every one of them.</p>
+          <div class="knx-main-field"><label for="knx-main-${entry}">Main group</label>
+            <div class="knx-main-box">
+              <input id="knx-main-${entry}" type="number" min="0" max="31" inputmode="numeric" data-action="knx-main" data-entry="${entry}" value="${tool.main}">
+              <div class="knx-steps">
+                <button type="button" data-action="knx-main-step" data-entry="${entry}" data-dir="1" aria-label="Next main group" ${tool.main >= 31 ? "disabled" : ""}>
+                  <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M5 0 10 6H0z"/></svg></button>
+                <button type="button" data-action="knx-main-step" data-entry="${entry}" data-dir="-1" aria-label="Previous main group" ${tool.main <= 0 ? "disabled" : ""}>
+                  <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z"/></svg></button>
+              </div>
+            </div></div>
+          <label class="knx-check"><input type="checkbox" data-action="knx-replace" data-entry="${entry}" ${tool.replace ? "checked" : ""}>
+            <span>Replace the addresses already set</span></label>
+          <div class="knx-layout-actions">
+            <button class="btn" data-action="knx-fill" data-entry="${entry}">${tool.replace ? "Replace all" : "Fill in"}</button>
+            ${any ? `<button class="btn secondary knx-clear" data-action="knx-clear" data-entry="${entry}">Clear all</button>` : ""}
+          </div>
+        </div>
+        <div class="knx-layout-rows">${rows}
+          <div class="knx-layout-foot"><span class="knx-seg locked" data-main="${entry}">${tool.main}</span><i>/</i><span class="knx-seg locked" data-scene-middle="${entry}">${tool.middles.scenes}</span><i>/</i><span class="knx-seg locked">0</span>
+            receives KNX scene numbers</div>
+        </div>
+      </div>`;
+  }
+
+  /** One light, group, scene or circadian: its addresses as chips, edited in place. */
+  _knxRow(master, status, kind, id, name, sub, item, icon) {
+    const entry = master.entry_id;
+    const have = (kind === "circadian" ? status.circadian : status[kind]?.[id]) || {};
+    const key = `${kind}|${id}`;
+    const editing = this._knxEdit === `${entry}|${key}`;
+    const functions = KNX_FUNCTIONS[kind](item);
+    const chips = functions.filter((f) => have[f] !== undefined).map((f) => `
+      <span class="knx-chip ${f.endsWith("_state") ? "state" : ""}" title="${esc(KNX_LABELS[f])}">
+        <em>${KNX_SHORT[f]}</em>${esc(f === "number" ? `scene ${have[f]}` : have[f])}</span>`).join("");
+    const iconHtml = icon === "sun" ? sunSvg("knx-row-icon") : `<ha-icon class="knx-row-icon" icon="${icon}"></ha-icon>`;
+    const form = editing ? `
+      <div class="knx-edit" data-key="${esc(key)}">
+        <div class="knx-grid">${functions.map((f) => `
+          <label class="field"><span>${KNX_LABELS[f]}</span><input data-function="${f}" value="${esc(have[f] ?? "")}"
+            placeholder="${f === "number" ? "1-64" : "e.g. 1/0/1"}" autocomplete="off" spellcheck="false"></label>`).join("")}</div>
+        <div class="actions left"><button class="btn small" data-action="knx-addresses-save" data-entry="${entry}" data-kind="${kind}" data-id="${esc(id)}">Save</button>
+          <button class="btn secondary small" data-action="knx-addresses-edit" data-entry="${entry}" data-key="">Cancel</button></div>
+      </div>` : "";
+    return `
+      <div class="knx-item ${editing ? "editing" : ""}">
+        <div class="knx-item-row">
+          ${iconHtml}
+          <div class="knx-item-name"><div>${esc(name)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>
+          <div class="knx-chips">${chips || `<span class="knx-none">Not on KNX</span>`}</div>
+          ${this._admin && !editing ? `<button class="icon-btn knx-edit-btn" data-action="knx-addresses-edit" data-entry="${entry}" data-key="${esc(key)}"
+            title="Edit ${esc(name)}'s addresses" aria-label="Edit ${esc(name)}'s addresses"><ha-icon icon="mdi:pencil-outline"></ha-icon></button>` : ""}
+        </div>${form}
       </div>`;
   }
 
@@ -1269,7 +1620,7 @@ class NetroniPanel extends HTMLElement {
       html += this._fold(entry, "circadian", "sun", "Circadian lighting", this._circadianSummary(entry),
         () => this._circadianSection(master).replace(/^\s*<h4>[^<]*<\/h4>/, ""));
       html += this._fold(entry, "protocols", "mdi:lan", "Network protocols", this._protocolsSummary(entry),
-        () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master), this._controlSection(master)]
+        () => [this._artnetSection(master), this._sacnSection(master), this._proModeSection(master), this._mqttSection(master), this._controlSection(master), this._knxSection(master)]
           .filter(Boolean).map((part) => `<div class="sub-card">${part}</div>`).join(""));
     }
     if (!this._admin) html += `<p class="sub pad">An administrator can change these settings.</p>`;
@@ -1314,6 +1665,7 @@ class NetroniPanel extends HTMLElement {
     const sacn = this._sacn[entry];
     const mqtt = this._mqtt[entry];
     const control = this._control[entry];
+    const knx = this._knx[entry];
     const part = (name, st, on) => (!st ? "" : st.failed ? `${name} ?` : st.enabled ? `${name} ${on(st)}` : `${name} off`);
     return [
       part("Art-Net", art, (st) => `on (universe ${esc(st.port_address)})`),
@@ -1321,6 +1673,7 @@ class NetroniPanel extends HTMLElement {
       art && !art.failed && art.pro_mode ? "Pro Mode" : "",
       part("MQTT", mqtt, (st) => (st.connected ? "connected" : "not connected")),
       part("Control systems", control, (st) => (!st.listening ? "not listening" : `on port ${st.port}${st.connections?.length ? ` (${st.connections.length} connected)` : ""}`)),
+      part("KNX", knx, (st) => (st.connected ? "connected" : "not connected")),
     ].filter(Boolean).join(" · ");
   }
 
@@ -2884,7 +3237,130 @@ const STYLE = `
   .set-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
   .set-row:first-of-type { border-top: 0; }
   .set-value { font-size: 15px; font-weight: 500; }
-  .mqtt-form, .control-form, .circadian-form { margin-top: 4px; }
+  .mqtt-form, .control-form, .knx-form, .circadian-form { margin-top: 4px; }
+  .knx-form .field-row, .knx-grid { flex-wrap: wrap; }
+  .knx-form .field { min-width: 200px; }
+  .knx-found { border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; margin-top: 10px; }
+  .knx-table { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 6px; container: knx / inline-size; }
+  .knx-head { padding: 8px 0; align-items: center; }
+  .knx-meter { flex: none; width: 72px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .knx-meter span { display: block; height: 100%; border-radius: 3px; background: var(--primary-color); transition: width .3s; }
+  .knx-intro { margin: 2px 0 16px; font-size: 13.5px; line-height: 1.45; color: var(--secondary-text-color); }
+  .knx-layout { display: grid; grid-template-columns: minmax(210px, 250px) 1fr; gap: 8px 28px; padding: 18px 20px;
+    border-radius: 16px; margin-bottom: 8px;
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--card));
+    border: 1px solid color-mix(in srgb, var(--primary-color) 22%, var(--line)); }
+  .knx-layout-title { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+  .knx-layout-side p { margin: 6px 0 16px; font-size: 13px; line-height: 1.45; color: var(--secondary-text-color); }
+  .knx-layout-side p b { color: var(--primary-text-color); font-family: var(--code-font-family, ui-monospace, monospace); }
+  .knx-main-field { display: block; }
+  .knx-main-field > label { display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--secondary-text-color); margin-bottom: 6px; }
+  .knx-main-box { display: inline-flex; align-items: stretch; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; transition: border-color .15s, box-shadow .15s; }
+  .knx-main-box:focus-within { border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 22%, transparent); }
+  .knx-main-box input { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+  .knx-steps { display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+  .knx-steps button { flex: 1; width: 30px; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer;
+    background: none; color: var(--secondary-text-color); transition: background .12s, color .12s; }
+  .knx-steps button + button { border-top: 1px solid var(--line); }
+  .knx-steps button:hover:not(:disabled) { background: color-mix(in srgb, var(--primary-color) 10%, transparent); color: var(--primary-color); }
+  .knx-steps button:active:not(:disabled) { background: color-mix(in srgb, var(--primary-color) 20%, transparent); }
+  .knx-steps button:disabled { opacity: .3; cursor: default; }
+  .knx-steps svg { width: 10px; height: 6px; fill: currentColor; }
+  .knx-main-field input { width: 76px; box-sizing: border-box; padding: 6px 4px; text-align: center;
+    font: 600 30px/1.2 var(--code-font-family, ui-monospace, monospace); font-variant-numeric: tabular-nums;
+    color: var(--primary-text-color); background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    -moz-appearance: textfield; transition: border-color .15s, box-shadow .15s; }
+  .knx-main-field input::-webkit-inner-spin-button, .knx-seg.edit::-webkit-inner-spin-button,
+  .knx-main-field input::-webkit-outer-spin-button, .knx-seg.edit::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .knx-main-field input:focus { outline: none; border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 22%, transparent); }
+  .knx-check { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 14px; font-size: 13px; cursor: pointer; }
+  .knx-check input { margin: 1px 0 0; accent-color: var(--primary-color); width: 16px; height: 16px; flex: none; }
+  .knx-layout-actions { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+  .knx-layout-actions .knx-clear { color: var(--bad); }
+  .knx-layout-rows { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .knx-layout-row { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 12px;
+    padding: 6px 8px; border-radius: 10px; transition: background .15s; }
+  .knx-layout-row:hover, .knx-layout-row:focus-within { background: color-mix(in srgb, var(--primary-color) 8%, transparent); }
+  .knx-layout-row > ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); }
+  .knx-layout-name { font-size: 14px; line-height: 1.25; }
+  .knx-layout-name small { display: block; font-size: 11.5px; color: var(--secondary-text-color); }
+  .knx-addr { display: inline-flex; align-items: center; gap: 1px; padding: 3px; border-radius: 10px;
+    background: var(--card); border: 1px solid var(--line);
+    font: 500 14px/1 var(--code-font-family, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+  .knx-addr i, .knx-layout-foot i { font-style: normal; color: var(--secondary-text-color); opacity: .55; padding: 0 1px; }
+  .knx-seg { display: inline-block; min-width: 26px; box-sizing: border-box; padding: 5px 4px; border-radius: 7px; text-align: center; }
+  .knx-seg.locked { color: var(--secondary-text-color); background: color-mix(in srgb, var(--secondary-text-color) 12%, transparent); }
+  .knx-seg.n { color: var(--secondary-text-color); font-style: italic; }
+  .knx-seg.edit { width: 36px; font: inherit; font-weight: 700; color: var(--primary-color); -moz-appearance: textfield;
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent); border: 1px solid transparent; outline: none;
+    transition: border-color .15s, background .15s; }
+  .knx-seg.edit:hover { border-color: color-mix(in srgb, var(--primary-color) 40%, transparent); }
+  .knx-seg.edit:focus { background: var(--card); border-color: var(--primary-color); }
+  .knx-seg.edit.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
+  .knx-layout-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 1px; margin: 8px 8px 0; padding-top: 10px;
+    border-top: 1px dashed var(--line); font-size: 12.5px; color: var(--secondary-text-color); }
+  .knx-layout-foot .knx-seg { font: 500 12.5px/1 var(--code-font-family, ui-monospace, monospace); min-width: 20px; padding: 4px 3px; }
+  .knx-layout-foot > span:nth-of-type(3) { margin-right: 8px; }
+  .knx-group-title { display: flex; align-items: center; gap: 8px; margin: 22px 2px 8px; font-size: 11.5px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--secondary-text-color); }
+  .knx-group-title ha-icon { --mdc-icon-size: 16px; }
+  .knx-group-title .svg-icon { width: 16px; height: 16px; }
+  .knx-group-title span { padding: 1px 7px; border-radius: 10px; background: var(--line); font-size: 11px; letter-spacing: 0; }
+  .knx-list { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card); }
+  .knx-item + .knx-item { border-top: 1px solid var(--line); }
+  .knx-item.editing { background: color-mix(in srgb, var(--primary-color) 4%, var(--card)); }
+  .knx-item-row { display: grid; grid-template-columns: 22px minmax(130px, 210px) 1fr 32px; align-items: center; gap: 14px;
+    min-height: 32px; padding: 9px 10px 9px 14px; }
+  .knx-row-icon { --mdc-icon-size: 20px; width: 20px; height: 20px; color: var(--secondary-text-color); }
+  svg.knx-row-icon { color: var(--warning-color, #ffa600); }
+  .knx-item-name { min-width: 0; }
+  .knx-item-name > div:first-child { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .knx-item-name .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .knx-chips { display: flex; flex-wrap: wrap; gap: 5px 6px; min-width: 0; }
+  .knx-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 3px; border-radius: 8px;
+    font: 500 12px/1.2 var(--code-font-family, ui-monospace, monospace); font-variant-numeric: tabular-nums;
+    background: color-mix(in srgb, var(--primary-color) 11%, transparent); color: var(--primary-text-color); }
+  .knx-chip em { font: 600 10px/1.3 inherit; font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); font-style: normal;
+    padding: 1px 5px; border-radius: 5px; background: var(--card); color: var(--primary-color); }
+  .knx-chip.state { --knx-state: var(--success-color, #43a047);
+    background: color-mix(in srgb, var(--knx-state) 13%, transparent); }
+  .knx-chip.state em { color: var(--knx-state); }
+  .knx-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: -8px 0 16px; font-size: 12px;
+    color: var(--secondary-text-color); }
+  .knx-legend > span:not(.knx-chip) { margin-right: 10px; }
+  .knx-legend .knx-chip { font-family: inherit; }
+  .knx-layout-row.state .knx-seg.edit { color: var(--success-color, #43a047);
+    background: color-mix(in srgb, var(--success-color, #43a047) 13%, transparent); }
+  .knx-layout-row.state .knx-seg.edit:focus { background: var(--card); border-color: var(--success-color, #43a047); }
+  .knx-none { font-size: 12.5px; color: var(--secondary-text-color); opacity: .8; }
+  .knx-edit-btn { width: 32px; height: 32px; --mdc-icon-size: 18px; }
+  .knx-edit { padding: 2px 14px 14px 50px; }
+  .knx-edit .actions { margin-top: 14px; }
+  .knx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); column-gap: 12px; }
+  .knx-grid .field { margin-top: 10px; }
+  .knx-grid .field input { font-family: var(--code-font-family, ui-monospace, monospace); }
+  @container knx (max-width: 640px) {
+    .knx-layout { grid-template-columns: 1fr; gap: 14px; padding: 16px 14px; }
+    .knx-item-row { grid-template-columns: 22px 1fr 32px; row-gap: 8px; }
+    .knx-chips { grid-column: 2 / 3; grid-row: 2; }
+    .knx-edit { padding-left: 14px; }
+  }
+  @container knx (max-width: 420px) {
+    .knx-layout { padding: 14px 10px; border-radius: 14px; }
+    .knx-layout-row { grid-template-columns: 1fr auto; gap: 8px; padding: 5px 4px; }
+    .knx-layout-row > ha-icon, .knx-layout-name small { display: none; }
+    .knx-layout-name { font-size: 13.5px; }
+    .knx-addr { font-size: 13px; padding: 2px; }
+    .knx-seg { min-width: 20px; padding: 4px 2px; }
+    .knx-seg.edit { width: 28px; }
+    .knx-layout-foot { margin: 6px 4px 0; }
+    .knx-item-row { padding: 9px 8px 9px 10px; gap: 10px; }
+    .knx-chips { grid-column: 1 / -1; }
+  }
   .circadian-form .field-row { flex-wrap: wrap; }
   .circadian-form .field { min-width: 180px; }
   .circadian-form .actions { margin: 16px 0 14px; }

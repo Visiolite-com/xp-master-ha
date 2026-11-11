@@ -76,6 +76,12 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_mqtt_set,
         ws_control_status,
         ws_control_set,
+        ws_knx_status,
+        ws_knx_set,
+        ws_knx_set_addresses,
+        ws_knx_scan,
+        ws_knx_fill,
+        ws_knx_clear,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -1056,6 +1062,113 @@ async def ws_control_set(hass: HomeAssistant, connection: websocket_api.ActiveCo
     fields = {k: msg[k] for k in ("enabled", "port", "password") if k in msg}
     try:
         status = await _hub(hass, msg["entry_id"]).client.call("control/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netroni/knx_status", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_knx_status(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """KNX: the settings, the group addresses, and the connection."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("knx/get")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/knx_set",
+        vol.Required("entry_id"): str,
+        vol.Optional("enabled"): bool,
+        vol.Optional("connection"): vol.In(["automatic", "tunneling", "tunneling_tcp", "routing"]),
+        vol.Optional("gateway"): vol.All(str, vol.Length(max=200)),
+        vol.Optional("individual_address"): vol.All(str, vol.Length(max=20)),
+        vol.Optional("rate_limit"): vol.All(int, vol.Range(min=1, max=50)),
+        vol.Optional("scene_address"): vol.All(str, vol.Length(max=20)),
+    }
+)
+@websocket_api.async_response
+async def ws_knx_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """KNX on or off, its connection and the scene address: in use at once; the new status."""
+    fields = {k: msg[k] for k in ("enabled", "connection", "gateway", "individual_address", "rate_limit", "scene_address") if k in msg}
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("knx/set", **fields)
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/knx_set_addresses",
+        vol.Required("entry_id"): str,
+        vol.Required("kind"): vol.In(["lights", "groups", "scenes", "circadian"]),
+        vol.Optional("thing", default=""): vol.All(str, vol.Length(max=100)),
+        vol.Required("addresses"): {vol.All(str, vol.Length(max=30)): vol.Any(vol.All(str, vol.Length(max=20)), int, None)},
+    }
+)
+@websocket_api.async_response
+async def ws_knx_set_addresses(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """One light's, group's or scene's KNX group addresses (all of them), or circadian's."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call(
+            "knx/set_addresses", kind=msg["kind"], id=msg["thing"], addresses=msg["addresses"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/knx_scan", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_knx_scan(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The KNX IP interfaces and routers the XP-Master finds on its network."""
+    try:
+        result = await _hub(hass, msg["entry_id"]).client.call("knx/scan")
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/knx_fill",
+        vol.Required("entry_id"): str,
+        vol.Required("main"): vol.All(int, vol.Range(min=0, max=31)),
+        vol.Optional("middles"): {str: vol.All(int, vol.Range(min=0, max=7))},
+        vol.Optional("replace_all", default=False): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_knx_fill(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Group addresses for every light, group and scene that has none yet, in the usual layout under a main group."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call(
+            "knx/fill", main=msg["main"], middles=msg.get("middles"), replace_all=msg["replace_all"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "netroni/knx_clear", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_knx_clear(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Every KNX group address removed."""
+    try:
+        status = await _hub(hass, msg["entry_id"]).client.call("knx/clear")
     except NetroniError as err:
         _error(connection, msg["id"], err)
         return
