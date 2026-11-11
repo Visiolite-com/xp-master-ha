@@ -538,8 +538,8 @@ class NetroniCircadian extends HTMLElement {
     const max = st.limits?.profiles ?? 16;
     const current = this._edit?.profile.id;
     const items = profiles.map((p) => {
-      const badges = [p.colour ? `<span class="badge warm">Colour</span>` : "", p.dimming ? `<span class="badge">Dimming</span>` : "",
-        `<span class="badge">${{ smooth: "Smooth", steps: "Steps", seasons: "Seasons" }[p.mode]}</span>`].join("");
+      const badges = [p.colour ? `<span class="badge warm">Colour</span>` : "", p.dimming ? `<span class="badge dim">Dimming</span>` : "",
+        `<span class="badge mode">${{ smooth: "Smooth", steps: "Steps", seasons: "Seasons" }[p.mode]}</span>`].join("");
       const now = [p.kelvin ? `${p.kelvin} K` : "", p.brightness !== null && p.brightness !== undefined ? `${p.brightness} %` : ""].filter(Boolean).join(" · ");
       const used = this._usedBy(p).map((u) => u.name).join(", ") || "Not used yet";
       return `
@@ -784,6 +784,8 @@ const STYLE = `
   .badges { display: flex; gap: 6px; flex-wrap: wrap; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--soft); }
   .badge.warm { background: rgba(242, 169, 0, .2); }
+  .badge.dim { background: color-mix(in srgb, var(--primary-color) 13%, transparent); }
+  .badge.mode { --mode: var(--success-color, #43a047); background: color-mix(in srgb, var(--mode) 13%, transparent); }
   .new { font: inherit; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border: 1px dashed var(--line);
     border-radius: 10px; background: none; color: var(--primary-color); cursor: pointer; font-weight: 500; }
   .editor { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }

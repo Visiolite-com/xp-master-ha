@@ -872,7 +872,7 @@ class NetroniPanel extends HTMLElement {
     if (!st || st.failed || !lightId) return "";
     const profiles = st.profiles || [];
     const own = profiles.find((p) => (p.lights || []).includes(lightId));
-    const follows = this._follows(entry, lightId);
+    const follows = this._follows(entry, lightId, true);
     const viaGroup = follows && !own ? ` It follows ${esc(follows.name)} with its group.` : "";
     const fits = profiles.filter((p) => p.dimming || kind === "tunable_white");
     const what = kind === "tunable_white" ? "colour temperature and brightness" : "brightness (a profile's dimming)";
@@ -1775,12 +1775,14 @@ class NetroniPanel extends HTMLElement {
     if (changed && !this._dialog) this._renderMain();
   }
 
-  /** The profile a light follows (its own, else its group's): the profile, false, or null when it can't
-   * tell (no circadian here). */
-  _follows(entry, lightId) {
+  /** The profile a light follows now (a recalled scene's, else its own, else its group's, as the service
+   * says in "assigned"); settled: only its own or its group's, from the settings. The profile, false, or
+   * null when it can't tell (no circadian here). */
+  _follows(entry, lightId, settled = false) {
     const st = this._circadian[entry];
     if (!st || st.failed || !lightId) return null;
     const profiles = st.profiles || [];
+    if (!settled && st.assigned) return profiles.find((p) => p.id === st.assigned[lightId]) || false;
     const own = profiles.find((p) => (p.lights || []).includes(lightId));
     if (own) return own;
     const group = (this._master(entry)?.groups || []).find((g) => g.members.includes(lightId));
@@ -2491,8 +2493,12 @@ class NetroniPanel extends HTMLElement {
   _sceneChips(master, light) {
     return (master.scenes || [])
       .filter((s) => s.entries.some((e) => e.light === light.id || (e.group && e.group === light.group)))
-      .map((s) => `<button class="group-chip" data-action="goto-scene" data-entry="${master.entry_id}" data-scene="${esc(s.id)}"
-        title="In the scene ${esc(s.name)}: open it"><ha-icon icon="mdi:palette-outline"></ha-icon>${esc(s.name)}</button>`)
+      .map((s) => {
+        const st = this._circadian[master.entry_id];
+        const profile = st && !st.failed && (st.profiles || []).find((p) => (p.scenes || []).includes(s.id));
+        return `<button class="group-chip" data-action="goto-scene" data-entry="${master.entry_id}" data-scene="${esc(s.id)}"
+        title="In the scene ${esc(s.name)}${profile ? `, with the circadian profile ${esc(profile.name)}` : ""}: open it"><ha-icon icon="mdi:palette-outline"></ha-icon>${esc(s.name)}</button>`;
+      })
       .join("");
   }
 
