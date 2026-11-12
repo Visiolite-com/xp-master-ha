@@ -133,6 +133,7 @@ class NetroniHub:
         if changed:  # e.g. an XP-Mini added while we were disconnected
             self._apply_structure()
         self.async_update_offline_issues()
+        self._update_devices()  # a name, serial or firmware changed while disconnected (not only at the next event)
         self._update_hidden()
         self._notify()
         self.entry.async_create_background_task(self.hass, self.async_send_home(), "netroni home")
