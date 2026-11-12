@@ -394,6 +394,35 @@ class NetroniPanel extends HTMLElement {
       case "mini-actions":
         this._openDialog({ kind: "mini-actions", entry: d.entry, uid: d.uid });
         break;
+      case "pack-actions":
+        this._openDialog({ kind: "pack-actions", entry: d.entry, uid: d.uid });
+        break;
+      case "pack-rename":
+        this._openDialog({ kind: "pack-rename", entry: d.entry, uid: d.uid, name: this._pack(d.entry, d.uid)?.name || "" });
+        break;
+      case "save-pack-name":
+        this._renamePack();
+        break;
+      case "pack-remove":
+        this._openDialog({ kind: "pack-remove", entry: d.entry, uid: d.uid });
+        break;
+      case "confirm-pack-remove":
+        this._removePack();
+        break;
+      case "pack-firmware": {
+        const pack = this._pack(d.entry, d.uid);
+        this._closeDialog();
+        if (pack?.firmware_entity) this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: pack.firmware_entity }, bubbles: true, composed: true }));
+        break;
+      }
+      case "goto-pack":
+        this._closeDialog();
+        this._tab = "scenes";
+        this._stopDmxPoll();
+        this._renderMain();
+        requestAnimationFrame(() =>
+          this.shadowRoot.getElementById(`pack-${d.entry}-${d.uid}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+        break;
       case "restart":
         this._closeDialog();
         this._restartMini(d.entry, d.uid);
@@ -930,6 +959,27 @@ class NetroniPanel extends HTMLElement {
     if (make) pairs.add(port);
     else pairs.delete(port);
     await this._run(() => this._call({ type: "netroni/set_pairs", entry_id: entry, uid, pairs: [...pairs] }));
+  }
+
+  _pack(entry, uid) {
+    return (this._master(entry)?.packs || []).find((p) => p.uid === uid);
+  }
+
+  /** The X-Pack's firmware update offered, from its update entity: the version, or null. */
+  _packUpdate(pack) {
+    const st = pack?.firmware_entity ? this._hass?.states[pack.firmware_entity] : null;
+    return st && st.state === "on" ? st.attributes.latest_version || null : null;
+  }
+
+  async _renamePack() {
+    const { entry, uid } = this._dialog;
+    const name = this.shadowRoot.getElementById("pack-name")?.value.trim() ?? "";
+    await this._run(() => this._call({ type: "netroni/pack_rename", entry_id: entry, uid, name }));
+  }
+
+  async _removePack() {
+    const { entry, uid } = this._dialog;
+    await this._run(() => this._call({ type: "netroni/pack_remove", entry_id: entry, uid }));
   }
 
   async _removeMini() {
@@ -1624,6 +1674,23 @@ class NetroniPanel extends HTMLElement {
             <button class="btn secondary" data-action="mini-actions" data-entry="${entry}" data-uid="${esc(mini.uid)}" ${this._admin ? "" : "disabled"}
               title="Restart, DMX, dimming curve, factory reset, replace or remove">Manage…</button>
           </div>`)
+        .join("")}`;
+    }
+    if ((master.packs || []).length) {
+      // As in the app's settings: each X-Pack, its firmware and update, and its menu.
+      html += `<h4>X-Packs</h4>${master.packs
+        .map((pack) => {
+          const update = this._packUpdate(pack);
+          return `
+          <div class="set-row">
+            <div class="grow"><div>${esc(this._packName(pack))}</div>
+              <div class="sub">${esc(pack.hardware_uid || pack.uid)}${pack.online ? ` · firmware ${esc(pack.firmware || "?")}` : ""}</div>
+              ${update ? `<div class="sub">Firmware ${esc(update)} is available: <a class="fact-link" data-action="more-info" data-entity="${esc(pack.firmware_entity)}">install it</a>.</div>` : ""}</div>
+            ${pack.online ? "" : this._chip(false, "", "Offline")}
+            <button class="btn secondary" data-action="pack-actions" data-entry="${entry}" data-uid="${esc(pack.uid)}" ${this._admin ? "" : "disabled"}
+              title="Rename, firmware, its buttons, or remove">Manage…</button>
+          </div>`;
+        })
         .join("")}`;
     }
     if (xpMaster) {
@@ -2596,23 +2663,27 @@ class NetroniPanel extends HTMLElement {
     return m ? `X-Pack ${m[1].slice(-4)}-${m[2]}` : `X-Pack ${pack.uid.slice(-4)}`;
   }
 
-  /** "4 inputs · firmware 0.4.0", "4 inputs · offline · changes saved, will be sent when it is back". */
+  /** "4 inputs · firmware 0.4.0", or "4 inputs" while offline (its chip says so). */
   _packSub(pack) {
     const parts = [`${pack.inputs.length} input${pack.inputs.length === 1 ? "" : "s"}`];
     if (pack.online) parts.push(`firmware ${pack.firmware || "?"}`);
-    else parts.push("offline");
-    if (pack.pending) parts.push(pack.online ? "a change was not taken: it will be sent again with the next one" : "changes saved, will be sent when it is back");
     return parts.join(" · ");
+  }
+
+  /** What waits for it, shown in the warn colour. */
+  _packPending(pack) {
+    return pack.online ? "a change was not taken: it will be sent again with the next one" : "changes saved, will be sent when it is back";
   }
 
   _buttonsCard(master) {
     const packs = master.packs || [];
     if (!packs.length) return "";
     // One block per X-Pack, its inputs under it: as many as it reports (4 on an X-Pack-RS).
-    const blocks = packs.map((pack) => `<div class="pack">
+    const blocks = packs.map((pack) => `<div class="pack ${pack.online ? "" : "offline"}" id="pack-${master.entry_id}-${esc(pack.uid)}">
       <div class="pack-head"><ha-icon icon="mdi:light-switch"></ha-icon>
         <div class="grow"><h4>${esc(this._packName(pack))}</h4>
-          <div class="light-sub">${esc(this._packSub(pack))}</div></div></div>
+          <div class="light-sub">${esc(this._packSub(pack))}${pack.pending ? ` · <span class="warn-text">${esc(this._packPending(pack))}</span>` : ""}</div></div>
+        ${this._chip(pack.online, "Online", "Offline")}</div>
       ${pack.inputs.map((i) => {
         const toggle = i.mode === "toggle";
         const what = toggle
@@ -3117,6 +3188,36 @@ class NetroniPanel extends HTMLElement {
       body = `<p>${esc(mini?.name || d.uid)} (${esc(d.uid)}) is removed from the XP-Master: its lights, names and DMX block are deleted.</p>
         <p class="sub">If it is connected again later, it will be added as a new XP-Mini.</p>`;
       action = `<button class="btn danger" data-action="confirm-remove" ${this._busy ? "disabled" : ""}>Remove XP-Mini</button>`;
+    } else if (d.kind === "pack-actions") {
+      const pack = this._pack(d.entry, d.uid);
+      const name = pack ? this._packName(pack) : d.uid;
+      const data = `data-entry="${d.entry}" data-uid="${esc(d.uid)}"`;
+      const update = this._packUpdate(pack);
+      const item = (action, icon, label, text, enabled, danger = false) => `
+        <button class="menu-item ${danger ? "danger-text" : ""}" data-action="${action}" ${data} ${enabled ? "" : "disabled"}>
+          <ha-icon icon="${icon}"></ha-icon><span><b>${label}</b><span class="sub">${text}</span></span></button>`;
+      title = esc(name);
+      body = `<div class="menu">
+        ${item("pack-rename", "mdi:pencil-outline", "Rename…", pack?.online ? "Kept on the X-Pack." : "Saved, and will be sent when it is back.", !!pack)}
+        ${item("pack-firmware", "mdi:update", "Firmware",
+          !pack?.online ? "Only when it is online." : update ? `${esc(pack.firmware || "?")} → ${esc(update)} is available: update it.` : `${esc(pack.firmware || "?")}: up to date.`,
+          !!(pack?.online && pack.firmware_entity))}
+        ${item("goto-pack", "mdi:gesture-tap-button", "Its buttons", "What each of its inputs does, on the Scenes tab.", !!pack)}
+        ${item("pack-remove", "mdi:delete-outline", "Remove…", pack?.online ? "Only when it is offline (disconnected for good)." : "Forget it and its buttons' set-up.", !!pack && !pack.online, true)}
+      </div>`;
+    } else if (d.kind === "pack-rename") {
+      const pack = this._pack(d.entry, d.uid);
+      title = `Rename ${esc(pack ? this._packName(pack) : d.uid)}`;
+      body = `<label class="field"><span>Name</span><input id="pack-name" maxlength="32" value="${esc(d.name)}"></label>
+        <p class="sub">${pack?.online ? "Kept on the X-Pack." : "It is offline: the name is saved, and will be sent when it is back."}</p>`;
+      action = `<button class="btn" data-action="save-pack-name" ${this._busy ? "disabled" : ""}>Save</button>`;
+    } else if (d.kind === "pack-remove") {
+      const pack = this._pack(d.entry, d.uid);
+      const name = pack ? this._packName(pack) : d.uid;
+      title = `Remove ${esc(name)}?`;
+      body = `<p>${esc(name)} (${esc(d.uid)}) is removed from the XP-Master, with its buttons' set-up and its device in Home Assistant.</p>
+        <p class="sub">If it is connected again later, it will be added as a new X-Pack with the buttons it has kept.</p>`;
+      action = `<button class="btn danger" data-action="confirm-pack-remove" ${this._busy ? "disabled" : ""}>Remove X-Pack</button>`;
     } else if (d.kind === "mini-actions") {
       const master = this._master(d.entry);
       const mini = this._mini(d.entry, d.uid);
@@ -3570,6 +3671,7 @@ const STYLE = `
   .buttons-card { margin-top: 32px; }
   .packs { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
   .pack { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 2px; }
+  .pack.offline { border-color: var(--warn); }
   .pack-head { display: flex; align-items: center; gap: 12px; padding: 4px 0 8px; }
   .pack-head ha-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); width: 28px; text-align: center; }
   .pack-head h4 { margin: 0; } /* its own section, below the scenes and their New scene */

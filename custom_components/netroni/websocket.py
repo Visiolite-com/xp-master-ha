@@ -59,6 +59,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_set_transitions,
         ws_scene_delete,
         ws_pack_set_input,
+        ws_pack_rename,
+        ws_pack_remove,
         ws_set_curve,
         ws_artnet_status,
         ws_artnet_set,
@@ -233,6 +235,43 @@ async def ws_pack_set_input(hass: HomeAssistant, connection: websocket_api.Activ
     connection.send_result(msg["id"], None)
 
 
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netroni/pack_rename",
+        vol.Required("entry_id"): str,
+        vol.Required("uid"): str,
+        vol.Required("name"): vol.All(str, vol.Length(max=32)),
+    }
+)
+@websocket_api.async_response
+async def ws_pack_rename(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """An X-Pack's name: kept on it (offline too: sent when it is back)."""
+    hub = _hub(hass, msg["entry_id"])
+    try:
+        await hub.client.call("pack/rename", uid=msg["uid"], name=msg["name"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netroni/pack_remove", vol.Required("entry_id"): str, vol.Required("uid"): str}
+)
+@websocket_api.async_response
+async def ws_pack_remove(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """An X-Pack that is gone, out of the XP-Master (only while it is offline); its device goes with it."""
+    hub = _hub(hass, msg["entry_id"])
+    try:
+        await hub.client.call("pack/remove", uid=msg["uid"])
+    except NetroniError as err:
+        _error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], None)
+
+
 def _hubs(hass: HomeAssistant) -> list[NetroniHub]:
     return [
         entry.runtime_data
@@ -377,6 +416,8 @@ def _overview(hass: HomeAssistant) -> dict:
                 "packs": [
                     {
                         **pack,
+                        "firmware_entity": ent_reg.async_get_entity_id(
+                            "update", DOMAIN, f"{hub.entity_prefix}_{pack['uid']}/firmware"),
                         "inputs": [
                             {**i, "entity_id": ent_reg.async_get_entity_id(
                                 "event", DOMAIN, f"{hub.entity_prefix}_{pack['uid']}/input{i['input']}")}
