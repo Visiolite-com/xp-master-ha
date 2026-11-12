@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
-from .client import NetroniError
+from .client import NetroniError, user_message
 from .entity import async_track
 from .hub import NetroniHub
 
@@ -76,4 +76,4 @@ class NetroniScene(Scene):
         try:
             await self.hub.client.call("scene/recall", scene_id=self.scene_id)
         except NetroniError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise HomeAssistantError(user_message(err)) from err

@@ -20,7 +20,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
-from .client import CommandError, NetroniError
+from .client import CommandError, NetroniError, user_message
 from .const import CONF_TOKEN, DOMAIN, PORTS_PER_MINI, SIGNAL_HUBS_CHANGED
 from .hub import ALL_MINIS, NetroniHub
 from .sync import async_apply_group_area
@@ -455,7 +455,7 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
 def _error(connection: websocket_api.ActiveConnection, msg_id: int, err: NetroniError) -> None:
     code = err.code if isinstance(err, CommandError) else "netroni_error"
-    message = str(err).split(": ", 1)[-1] if isinstance(err, CommandError) else str(err)
+    message = user_message(err)
     connection.send_error(msg_id, code, message)
 
 

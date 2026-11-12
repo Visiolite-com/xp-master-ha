@@ -21,11 +21,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
-from .client import CommandError, NetroniError
+from .client import CommandError, NetroniError, user_message
 from .const import DOMAIN
 from .entity import NetroniEntity, async_track
 from .firmware import MINI_NOTE, MINI_OVER_DATA2, PACK_NOTE, PACK_OVER_DATA2, _version, for_board, mini_release, pack_release
-from .hub import NetroniHub
+from .hub import NetroniHub, pack_name
 
 BRIDGE_NOTE = "This update includes the bridge firmware: the lights don't respond for a few seconds while it is installed."
 async def async_setup_entry(
@@ -233,7 +233,7 @@ class XPackUpdate(UpdateEntity):
         self.pack_uid = pack_uid
         self._attr_unique_id = f"{hub.entity_prefix}_{pack_uid}/firmware"
         pack = hub.pack(pack_uid) or {}
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, pack_uid)}, name=pack.get("name") or f"X-Pack {pack_uid[-4:]}")
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, pack_uid)}, name=pack_name(pack or {"uid": pack_uid}))
 
     @property
     def _pack(self) -> dict:
@@ -310,6 +310,6 @@ class XPackUpdate(UpdateEntity):
         try:
             await self.hub.client.call("pack/update_firmware", uid=self.pack_uid)
         except CommandError as err:
-            raise HomeAssistantError(f"Cannot update this X-Pack: {str(err).split(': ', 1)[-1]}") from err
+            raise HomeAssistantError(f"Cannot update this X-Pack: {user_message(err)}") from err
         except NetroniError as err:
             raise HomeAssistantError(f"Cannot reach the {self.hub.product}: {err}") from err

@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import NetroniConfigEntry
 from .const import DOMAIN, MANUFACTURER
 from .entity import NetroniEntity, async_track
-from .hub import NetroniHub
+from .hub import NetroniHub, pack_name
 from .identify import port_label
 
 EVENT_PORT_IDENTIFIED = "port_identified"
@@ -96,8 +96,8 @@ class InputEvent(EventEntity):
             identifiers={(DOMAIN, pack_uid)},
             manufacturer=MANUFACTURER,
             model="X-Pack-RS",
-            name=pack.get("name") or f"X-Pack {pack_uid[-4:]}",
-            serial_number=pack_uid,
+            name=pack_name(pack or {"uid": pack_uid}),
+            serial_number=pack.get("hardware_uid") or pack_uid,  # the unit now (hub._update_devices)
             sw_version=pack.get("firmware"),
             via_device_id=hub.master_device_id,
         )

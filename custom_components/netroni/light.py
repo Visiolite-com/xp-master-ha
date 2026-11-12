@@ -17,7 +17,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NetroniConfigEntry
-from .client import NetroniError
+from .client import NetroniError, user_message
 from .const import KELVIN_COOL, KELVIN_WARM
 from .entity import NetroniEntity, async_track
 from .hub import NetroniHub
@@ -112,7 +112,7 @@ class NetroniGroupLight(LightEntity):
         try:
             await self.hub.client.call("group/set", group_id=self.group_id, **fields)
         except NetroniError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise HomeAssistantError(user_message(err)) from err
 
 
 class NetroniLight(NetroniEntity, LightEntity):
@@ -203,4 +203,4 @@ class NetroniLight(NetroniEntity, LightEntity):
         try:
             await self.hub.client.call("light/set", light_id=self.light_id, **fields)
         except NetroniError as err:
-            raise HomeAssistantError(f"XP-Master rejected the command: {err}") from err
+            raise HomeAssistantError(user_message(err)) from err

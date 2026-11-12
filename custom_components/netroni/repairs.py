@@ -1,6 +1,6 @@
 """Repairs: an offline XP-Mini (the fix removes it from the XP-Master when it was taken away), and a
 new XP-Mini found while another is offline (the fix makes it that one's replacement, or confirms it
-is a new XP-Mini)."""
+is a new XP-Mini). The same two for X-Packs (xp-master docs/x-packs.md)."""
 from __future__ import annotations
 
 from typing import Any
@@ -16,7 +16,8 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
 from .backup import RESTORE_ISSUE, async_read_backup
-from .client import NetroniError, async_entry_token, client_for_entry
+from .client import NetroniError, async_entry_token, client_for_entry, user_message
+from .hub import pack_name
 from .const import DOMAIN
 from .replace import async_replace, replace_summary
 
@@ -28,6 +29,10 @@ async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data: dict[s
         return ReplacementFlow(data or {})
     if (data or {}).get("kind") == "restore":
         return RestoreFlow(data or {})
+    if (data or {}).get("kind") == "pack_replace":
+        return PackReplacementFlow(data or {})
+    if (data or {}).get("kind") == "pack_remove":
+        return RemoveOfflinePackFlow(data or {})
     return RemoveOfflineMiniFlow(data or {})
 
 
@@ -55,7 +60,7 @@ class RestoreFlow(RepairsFlow):
             await client.connect()
             await client.call("backup/restore", backup=backup)
         except NetroniError as err:
-            return self.async_abort(reason="restore_failed", description_placeholders={"error": str(err)})
+            return self.async_abort(reason="restore_failed", description_placeholders={"error": user_message(err)})
         finally:
             await client.close()
         ir.async_delete_issue(self.hass, DOMAIN, RESTORE_ISSUE + self._entry_id)
@@ -99,7 +104,7 @@ class ReplacementFlow(RepairsFlow):
                 try:
                     await hub.client.call("mini/confirm_new", uid=self._uid)
                 except NetroniError as err:
-                    return self.async_abort(reason="replace_failed", description_placeholders={"error": str(err)})
+                    return self.async_abort(reason="replace_failed", description_placeholders={"error": user_message(err)})
                 return self.async_create_entry(data={})
             self._old = user_input["replaces"]
             return await self.async_step_confirm()
@@ -123,7 +128,7 @@ class ReplacementFlow(RepairsFlow):
             try:
                 await async_replace(hub, self._old, self._uid)
             except NetroniError as err:
-                return self.async_abort(reason="replace_failed", description_placeholders={"error": str(err)})
+                return self.async_abort(reason="replace_failed", description_placeholders={"error": user_message(err)})
             return self.async_create_entry(data={})
         return self.async_show_form(
             step_id="confirm", data_schema=vol.Schema({}), description_placeholders=replace_summary(hub, old, new)
@@ -150,10 +155,96 @@ class RemoveOfflineMiniFlow(RepairsFlow):
             try:
                 await hub.client.call("mini/remove", uid=self._uid)
             except NetroniError as err:
-                return self.async_abort(reason="remove_failed", description_placeholders={"error": str(err)})
+                return self.async_abort(reason="remove_failed", description_placeholders={"error": user_message(err)})
             return self.async_create_entry(data={})
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),
             description_placeholders={"name": mini["name"], "uid": self._uid},
         )
+
+
+class _PackFlow(RepairsFlow):
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._entry_id = data.get("entry_id", "")
+        self._uid = data.get("uid", "")
+
+    def _hub(self):
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        return entry.runtime_data if entry is not None and entry.state is ConfigEntryState.LOADED else None
+
+
+class PackReplacementFlow(_PackFlow):
+    """Is the new X-Pack replacing one that is offline? Pick it, or say it is an extra one."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        super().__init__(data)
+        self._old = ""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return await self.async_step_choose()
+
+    async def async_step_choose(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        hub = self._hub()
+        if hub is None:
+            return self.async_abort(reason="not_loaded")
+        new = hub.pack(self._uid)
+        offline = [p for p in hub.config.get("packs", []) if not p.get("online", True)]
+        if new is None or not new.get("replace_candidate") or not offline:
+            return self.async_abort(reason="resolved")
+        if user_input is not None:
+            if user_input["replaces"] == EXTRA:
+                try:
+                    await hub.client.call("pack/confirm_new", uid=self._uid)
+                except NetroniError as err:
+                    return self.async_abort(reason="replace_failed", description_placeholders={"error": user_message(err)})
+                return self.async_create_entry(data={})
+            self._old = user_input["replaces"]
+            return await self.async_step_confirm()
+        options = [SelectOptionDict(value=p["uid"], label=f"It replaces {pack_name(p)} ({p.get('hardware_uid') or p['uid']}), offline")
+                   for p in offline]
+        options.append(SelectOptionDict(value=EXTRA, label="No, it is a new X-Pack"))
+        schema = vol.Schema(
+            {vol.Required("replaces"): SelectSelector(SelectSelectorConfig(options=options, mode=SelectSelectorMode.LIST))}
+        )
+        return self.async_show_form(step_id="choose", data_schema=schema, description_placeholders={
+            "name": pack_name(new), "uid": new.get("hardware_uid") or self._uid})
+
+    async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        hub = self._hub()
+        if hub is None:
+            return self.async_abort(reason="not_loaded")
+        old, new = hub.pack(self._old), hub.pack(self._uid)
+        if old is None or new is None or old.get("online", True) or not new.get("online", True):
+            return self.async_abort(reason="resolved")
+        if user_input is not None:
+            try:
+                await hub.client.call("pack/replace", old=self._old, new=self._uid)
+            except NetroniError as err:
+                return self.async_abort(reason="replace_failed", description_placeholders={"error": user_message(err)})
+            return self.async_create_entry(data={})
+        return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}), description_placeholders={
+            "old": pack_name(old), "old_uid": old.get("hardware_uid") or old["uid"],
+            "new": pack_name(new), "new_uid": new.get("hardware_uid") or new["uid"],
+            "inputs": str(len(old.get("inputs", [])))})
+
+
+class RemoveOfflinePackFlow(_PackFlow):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        hub = self._hub()
+        if hub is None:
+            return self.async_abort(reason="not_loaded")
+        pack = hub.pack(self._uid)
+        if pack is None or pack.get("online", True):
+            return self.async_abort(reason="resolved")  # removed or back meanwhile
+        if user_input is not None:
+            try:
+                await hub.client.call("pack/remove", uid=self._uid)
+            except NetroniError as err:
+                return self.async_abort(reason="remove_failed", description_placeholders={"error": user_message(err)})
+            return self.async_create_entry(data={})
+        return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}), description_placeholders={
+            "name": pack_name(pack), "uid": pack.get("hardware_uid") or self._uid})

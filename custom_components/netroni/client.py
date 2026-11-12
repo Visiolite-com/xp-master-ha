@@ -172,6 +172,16 @@ class CommandError(NetroniError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
+        self.message = message
+
+
+def user_message(err: NetroniError) -> str:
+    """An error as a sentence for the user: the XP-Master's own sentence, without its code."""
+    if not isinstance(err, CommandError):
+        return str(err)
+    if err.code == "bus_error":  # what failed on the cable, not a sentence of its own
+        return f"The command did not get through on Visio-Link ({err.message}); try again"
+    return err.message
 
 
 class NetroniClient:

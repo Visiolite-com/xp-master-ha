@@ -161,6 +161,46 @@
         }
       }
     },
+    "pack_offline": {
+      "title": "{name} is offline",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{name} is offline",
+            "description": "X-Pack {name} ({uid}) no longer answers. Its buttons don't work while it is offline.\n\nCheck its Visio-Link cable; this message disappears as soon as it is back. Changes made to its buttons meanwhile are kept and sent when it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its button set-up is deleted. If it is connected again later, it will be added as a new X-Pack.",
+            "submit": "Remove X-Pack"
+          }
+        },
+        "abort": {
+          "not_loaded": "The XP-Master is not connected. Try again when it is online.",
+          "resolved": "This X-Pack is back online or already removed.",
+          "remove_failed": "The XP-Master could not remove it: {error}"
+        }
+      }
+    },
+    "pack_replacement": {
+      "title": "New X-Pack {name}: is it a replacement?",
+      "fix_flow": {
+        "step": {
+          "choose": {
+            "title": "New X-Pack {name}",
+            "description": "X-Pack {name} ({uid}) was found while another X-Pack is offline. If it was mounted in that one's place, it can take over its buttons: their names and what each one does.",
+            "data": {
+              "replaces": "This X-Pack"
+            }
+          },
+          "confirm": {
+            "title": "Replace {old} with {new}?",
+            "description": "**{new}** ({new_uid}) takes the place of **{old}** ({old_uid}): the set-up of its {inputs} buttons is written to it. Its button entities stay the same, so automations keep working.\n\nSubmit to replace."
+          }
+        },
+        "abort": {
+          "not_loaded": "The XP-Master is not connected. Try again when it is online.",
+          "resolved": "Nothing to do any more: the X-Packs concerned are back, replaced or removed.",
+          "replace_failed": "The X-Pack was not replaced: {error}"
+        }
+      }
+    },
     "restore": {
       "title": "Restore the settings of {name}?",
       "fix_flow": {

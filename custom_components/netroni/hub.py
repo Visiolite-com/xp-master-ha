@@ -21,6 +21,20 @@ MAX_RECONNECT_DELAY = 30
 STABLE_AFTER = 60  # s connected before a lost connection starts the backoff afresh
 OFFLINE_ISSUE = "mini_offline_"
 REPLACE_ISSUE = "mini_new_"  # Repairs issue: is this new XP-Mini replacing one that is offline?
+PACK_OFFLINE_ISSUE = "pack_offline_"
+PACK_REPLACE_ISSUE = "pack_new_"  # the same for X-Packs
+
+
+def pack_name(pack: dict) -> str:
+    """An X-Pack's name, or for one without: "X-Pack" and its id's last 4 ("X-Pack AD2A"), with the
+    "-2" of a unit replaced and connected again ("X-Pack AD2A-2")."""
+    if pack.get("name"):
+        return pack["name"]
+    uid = pack.get("uid", "")
+    base, dash, n = uid.rpartition("-")
+    if dash and n.isdigit():
+        return f"X-Pack {base[-4:]}-{n}"
+    return f"X-Pack {uid[-4:]}"
 ALL_MINIS = "*"  # async_add_identify_listener key: every XP-Mini of this XP-Master  # Repairs issue id prefix, followed by the XP-Mini UID
 
 
@@ -192,10 +206,10 @@ class NetroniHub:
             ids.add(f"{prefix}{mini['uid']}/port_identified")
             ids.add(f"{prefix}{mini['uid']}/restart")
             ids.add(f"{prefix}{mini['uid']}/firmware")
+            ids.add(f"{prefix}{mini['uid']}/connection")
         for pack in self.config.get("packs", []):
             ids.update(f"{prefix}{pack['uid']}/input{i['input']}" for i in pack.get("inputs", []))
             ids.add(f"{prefix}{pack['uid']}/firmware")
-            ids.add(f"{prefix}{mini['uid']}/connection")
         return ids
 
     # --- listeners ---------------------------------------------------------
@@ -305,6 +319,8 @@ class NetroniHub:
             self.config["packs"] = data.get("packs", [])
             if _structure(self.config) != old:
                 self._apply_structure()
+            self.async_update_offline_issues()
+            self._update_devices()
             self._notify()
         elif event == "scene_recalled":
             for listener in list(self._scene_listeners.get(data.get("scene_id"), set())):
@@ -414,6 +430,14 @@ class NetroniHub:
             firmware = mini.get("firmware") or device.sw_version
             if device.serial_number != serial or device.sw_version != firmware:
                 dev_reg.async_update_device(device.id, serial_number=serial, sw_version=firmware)
+        for pack in self.config.get("packs", []):  # the same for X-Packs; offline: the last one known
+            device = devices.get(pack["uid"])
+            if device is None:
+                continue
+            serial = pack.get("hardware_uid") or pack["uid"]
+            firmware = pack.get("firmware") or device.sw_version
+            if device.serial_number != serial or device.sw_version != firmware:
+                dev_reg.async_update_device(device.id, serial_number=serial, sw_version=firmware)
 
     @callback
     def _on_disconnect(self) -> None:
@@ -475,12 +499,20 @@ class NetroniHub:
         minis = self.config.get("minis", [])
         offline = {mini["uid"]: mini for mini in minis if not mini.get("online", True)}
         candidates = {m["uid"]: m for m in minis if m.get("replace_candidate") and m.get("online", True)} if offline else {}
+        packs = self.config.get("packs", [])
+        packs_offline = {p["uid"]: p for p in packs if not p.get("online", True)}
+        pack_candidates = ({p["uid"]: p for p in packs if p.get("replace_candidate") and p.get("online", True)}
+                           if packs_offline else {})
         for domain, issue_id in list(issue_reg.issues):
             if domain != DOMAIN:
                 continue
             if issue_id.startswith(OFFLINE_ISSUE) and issue_id.removeprefix(OFFLINE_ISSUE) not in offline:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             if issue_id.startswith(REPLACE_ISSUE) and issue_id.removeprefix(REPLACE_ISSUE) not in candidates:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            if issue_id.startswith(PACK_OFFLINE_ISSUE) and issue_id.removeprefix(PACK_OFFLINE_ISSUE) not in packs_offline:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            if issue_id.startswith(PACK_REPLACE_ISSUE) and issue_id.removeprefix(PACK_REPLACE_ISSUE) not in pack_candidates:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         for uid, mini in candidates.items():
             ir.async_create_issue(
@@ -505,6 +537,20 @@ class NetroniHub:
                 translation_key="mini_offline",
                 translation_placeholders={"name": mini["name"], "uid": uid},
                 data={"entry_id": self.entry.entry_id, "uid": uid},
+            )
+        for uid, pack in pack_candidates.items():
+            ir.async_create_issue(
+                self.hass, DOMAIN, PACK_REPLACE_ISSUE + uid, is_fixable=True, is_persistent=False,
+                severity=ir.IssueSeverity.WARNING, translation_key="pack_replacement",
+                translation_placeholders={"name": pack_name(pack), "uid": pack.get("hardware_uid") or uid},
+                data={"entry_id": self.entry.entry_id, "uid": uid, "kind": "pack_replace"},
+            )
+        for uid, pack in packs_offline.items():
+            ir.async_create_issue(
+                self.hass, DOMAIN, PACK_OFFLINE_ISSUE + uid, is_fixable=True, is_persistent=False,
+                severity=ir.IssueSeverity.WARNING, translation_key="pack_offline",
+                translation_placeholders={"name": pack_name(pack), "uid": pack.get("hardware_uid") or uid},
+                data={"entry_id": self.entry.entry_id, "uid": uid, "kind": "pack_remove"},
             )
 
     @callback

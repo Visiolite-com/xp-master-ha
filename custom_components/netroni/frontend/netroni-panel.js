@@ -2589,8 +2589,20 @@ class NetroniPanel extends HTMLElement {
   // An input keeps its action on the X-Pack: it works with no XP-Master and no Home Assistant.
   // A scene needs no button; a button is one way to trigger it (a schedule may be another).
 
+  /** Its name, or "X-Pack AD2A" (its id's last 4), "X-Pack AD2A-2" for a unit replaced and connected again. */
   _packName(pack) {
-    return pack.name || `X-Pack ${pack.uid.slice(-4)}`;
+    if (pack.name) return pack.name;
+    const m = /^(.*)-(\d+)$/.exec(pack.uid);
+    return m ? `X-Pack ${m[1].slice(-4)}-${m[2]}` : `X-Pack ${pack.uid.slice(-4)}`;
+  }
+
+  /** "4 inputs · firmware 0.4.0", "4 inputs · offline · changes saved, sent when it is back". */
+  _packSub(pack) {
+    const parts = [`${pack.inputs.length} input${pack.inputs.length === 1 ? "" : "s"}`];
+    if (pack.online) parts.push(`firmware ${pack.firmware || "?"}`);
+    else parts.push("offline");
+    if (pack.pending) parts.push(pack.online ? "a change was not taken: sent again with the next one" : "changes saved, sent when it is back");
+    return parts.join(" · ");
   }
 
   _buttonsCard(master) {
@@ -2600,13 +2612,13 @@ class NetroniPanel extends HTMLElement {
     const blocks = packs.map((pack) => `<div class="pack">
       <div class="pack-head"><ha-icon icon="mdi:light-switch"></ha-icon>
         <div class="grow"><h4>${esc(this._packName(pack))}</h4>
-          <div class="light-sub">${pack.inputs.length} input${pack.inputs.length === 1 ? "" : "s"} · firmware ${esc(pack.firmware)}${pack.online ? "" : " · offline"}</div></div></div>
+          <div class="light-sub">${esc(this._packSub(pack))}</div></div></div>
       ${pack.inputs.map((i) => {
         const toggle = i.mode === "toggle";
         const what = toggle
           ? `${this._actionText(master, i.action)} · off: ${this._actionText(master, i.action_off)}`
           : this._actionText(master, i.action);
-        const edit = this._admin && pack.online
+        const edit = this._admin  // offline too: kept, and sent when it is back
           ? `<button class="btn secondary" data-action="edit-input" data-entry="${master.entry_id}" data-uid="${esc(pack.uid)}" data-input="${i.input}">Edit</button>`
           : "";
         return `<div class="scene-entry input-row"><ha-icon icon="${toggle ? "mdi:toggle-switch-outline" : "mdi:gesture-tap-button"}"></ha-icon>
