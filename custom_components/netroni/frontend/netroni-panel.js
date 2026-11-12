@@ -2683,6 +2683,7 @@ class NetroniPanel extends HTMLElement {
       <div class="pack-head"><ha-icon icon="mdi:light-switch"></ha-icon>
         <div class="grow"><h4>${esc(this._packName(pack))}</h4>
           <div class="light-sub">${esc(this._packSub(pack))}${pack.pending ? ` · <span class="warn-text">${esc(this._packPending(pack))}</span>` : ""}</div></div>
+        ${this._admin ? `<button class="icon-btn" data-action="pack-actions" data-entry="${master.entry_id}" data-uid="${esc(pack.uid)}" title="Rename, firmware or remove"><ha-icon icon="mdi:cog-outline"></ha-icon></button>` : ""}
         ${this._chip(pack.online, "Online", "Offline")}</div>
       ${pack.inputs.map((i) => {
         const toggle = i.mode === "toggle";
