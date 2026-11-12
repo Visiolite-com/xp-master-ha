@@ -2596,12 +2596,12 @@ class NetroniPanel extends HTMLElement {
     return m ? `X-Pack ${m[1].slice(-4)}-${m[2]}` : `X-Pack ${pack.uid.slice(-4)}`;
   }
 
-  /** "4 inputs · firmware 0.4.0", "4 inputs · offline · changes saved, sent when it is back". */
+  /** "4 inputs · firmware 0.4.0", "4 inputs · offline · changes saved, will be sent when it is back". */
   _packSub(pack) {
     const parts = [`${pack.inputs.length} input${pack.inputs.length === 1 ? "" : "s"}`];
     if (pack.online) parts.push(`firmware ${pack.firmware || "?"}`);
     else parts.push("offline");
-    if (pack.pending) parts.push(pack.online ? "a change was not taken: sent again with the next one" : "changes saved, sent when it is back");
+    if (pack.pending) parts.push(pack.online ? "a change was not taken: it will be sent again with the next one" : "changes saved, will be sent when it is back");
     return parts.join(" · ");
   }
 
