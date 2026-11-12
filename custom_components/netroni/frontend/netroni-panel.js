@@ -2658,6 +2658,8 @@ class NetroniPanel extends HTMLElement {
 
   /** Its name, or "X-Pack AD2A" (its id's last 4), "X-Pack AD2A-2" for a unit replaced and connected again. */
   _packName(pack) {
+    // A unit offered as a replacement: by the unit itself, never its "-2" id or a carried-over name.
+    if (pack.replace_candidate) return `X-Pack ${(pack.hardware_uid || pack.uid).slice(-4)}`;
     if (pack.name) return pack.name;
     const m = /^(.*)-(\d+)$/.exec(pack.uid);
     return m ? `X-Pack ${m[1].slice(-4)}-${m[2]}` : `X-Pack ${pack.uid.slice(-4)}`;

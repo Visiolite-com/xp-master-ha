@@ -27,7 +27,11 @@ PACK_REPLACE_ISSUE = "pack_new_"  # the same for X-Packs
 
 def pack_name(pack: dict) -> str:
     """An X-Pack's name, or for one without: "X-Pack" and its id's last 4 ("X-Pack AD2A"), with the
-    "-2" of a unit replaced and connected again ("X-Pack AD2A-2")."""
+    "-2" of a unit replaced and connected again ("X-Pack AD2A-2"). A unit offered as a replacement is
+    named by the unit itself, its own UID's last 4 ("X-Pack 4E26"): never its "-2" id or the name it
+    carries over (the user, 2026-11-12)."""
+    if pack.get("replace_candidate"):
+        return f"X-Pack {(pack.get('hardware_uid') or pack.get('uid', ''))[-4:]}"
     if pack.get("name"):
         return pack["name"]
     uid = pack.get("uid", "")

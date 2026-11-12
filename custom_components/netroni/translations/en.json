@@ -167,7 +167,7 @@
         "step": {
           "confirm": {
             "title": "{name} is offline",
-            "description": "X-Pack {name} ({uid}) no longer answers. Its buttons may not work until it is connected again.\n\nCheck its Visio-Link cable; this message disappears as soon as it is back. Changes made to its buttons meanwhile are kept and sent when it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its button set-up is deleted. If it is connected again later, it will be added as a new X-Pack.",
+            "description": "{name} ({uid}) no longer answers. Its buttons may not work until it is connected again.\n\nCheck its Visio-Link cable; this message disappears as soon as it is back. Changes made to its buttons meanwhile are kept and will be sent when it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its button set-up is deleted. If it is connected again later, it will be added as a new X-Pack.",
             "submit": "Remove X-Pack"
           }
         },
@@ -179,12 +179,12 @@
       }
     },
     "pack_replacement": {
-      "title": "New X-Pack {name}: is it a replacement?",
+      "title": "New {name}: is it a replacement?",
       "fix_flow": {
         "step": {
           "choose": {
-            "title": "New X-Pack {name}",
-            "description": "X-Pack {name} ({uid}) was found while another X-Pack is offline. If it was mounted in that one's place, it can take over its buttons: their names and what each one does.",
+            "title": "New {name}",
+            "description": "{name} ({uid}) was found while another X-Pack is offline. If it was mounted in that one's place, it can take over its buttons: their names and what each one does.",
             "data": {
               "replaces": "This X-Pack"
             }
