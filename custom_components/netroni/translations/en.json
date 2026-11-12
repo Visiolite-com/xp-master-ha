@@ -167,7 +167,7 @@
         "step": {
           "confirm": {
             "title": "{name} is offline",
-            "description": "X-Pack {name} ({uid}) no longer answers. Its buttons don't work while it is offline.\n\nCheck its Visio-Link cable; this message disappears as soon as it is back. Changes made to its buttons meanwhile are kept and sent when it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its button set-up is deleted. If it is connected again later, it will be added as a new X-Pack.",
+            "description": "X-Pack {name} ({uid}) no longer answers. Its buttons may not work until it is connected again.\n\nCheck its Visio-Link cable; this message disappears as soon as it is back. Changes made to its buttons meanwhile are kept and sent when it is back.\n\nIf {name} was taken away on purpose, remove it from the XP-Master: its button set-up is deleted. If it is connected again later, it will be added as a new X-Pack.",
             "submit": "Remove X-Pack"
           }
         },
@@ -197,7 +197,8 @@
         "abort": {
           "not_loaded": "The XP-Master is not connected. Try again when it is online.",
           "resolved": "Nothing to do any more: the X-Packs concerned are back, replaced or removed.",
-          "replace_failed": "The X-Pack was not replaced: {error}"
+          "replace_failed": "The X-Pack was not replaced: {error}",
+          "replaced_differ": "{new} took the place of the old X-Pack, but buttons {inputs} did not keep their set-up when read back. Check them in the Netroni panel."
         }
       }
     },

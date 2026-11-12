@@ -96,7 +96,8 @@ class ReplacementFlow(RepairsFlow):
         if hub is None:
             return self.async_abort(reason="not_loaded")
         new = hub.mini(self._uid)
-        offline = [m for m in hub.config.get("minis", []) if not m.get("online", True)]
+        # one that is itself a candidate (offline before it was answered) is not one to replace
+        offline = [m for m in hub.config.get("minis", []) if not m.get("online", True) and not m.get("replace_candidate")]
         if new is None or not new.get("replace_candidate") or not offline:
             return self.async_abort(reason="resolved")
         if user_input is not None:
@@ -189,7 +190,7 @@ class PackReplacementFlow(_PackFlow):
         if hub is None:
             return self.async_abort(reason="not_loaded")
         new = hub.pack(self._uid)
-        offline = [p for p in hub.config.get("packs", []) if not p.get("online", True)]
+        offline = [p for p in hub.config.get("packs", []) if not p.get("online", True) and not p.get("replace_candidate")]
         if new is None or not new.get("replace_candidate") or not offline:
             return self.async_abort(reason="resolved")
         if user_input is not None:
@@ -219,9 +220,13 @@ class PackReplacementFlow(_PackFlow):
             return self.async_abort(reason="resolved")
         if user_input is not None:
             try:
-                await hub.client.call("pack/replace", old=self._old, new=self._uid)
+                result = await hub.client.call("pack/replace", old=self._old, new=self._uid)
             except NetroniError as err:
                 return self.async_abort(reason="replace_failed", description_placeholders={"error": user_message(err)})
+            differ = (result or {}).get("differ") or []
+            if differ:  # replaced, but read back these inputs are not as written
+                return self.async_abort(reason="replaced_differ", description_placeholders={
+                    "new": pack_name(new), "inputs": ", ".join(str(n) for n in differ)})
             return self.async_create_entry(data={})
         return self.async_show_form(step_id="confirm", data_schema=vol.Schema({}), description_placeholders={
             "old": pack_name(old), "old_uid": old.get("hardware_uid") or old["uid"],
