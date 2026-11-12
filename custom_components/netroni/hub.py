@@ -440,8 +440,11 @@ class NetroniHub:
                 continue
             serial = pack.get("hardware_uid") or pack["uid"]
             firmware = pack.get("firmware") or device.sw_version
-            if device.serial_number != serial or device.sw_version != firmware:
-                dev_reg.async_update_device(device.id, serial_number=serial, sw_version=firmware)
+            # And its name: "X-Pack 4E26" while it is offered as a replacement, its own once answered
+            # (a new one keeps the unit's name; bench 2026-11-12). A name given in Home Assistant wins.
+            name = pack_name(pack)
+            if device.serial_number != serial or device.sw_version != firmware or device.name != name:
+                dev_reg.async_update_device(device.id, serial_number=serial, sw_version=firmware, name=name)
 
     @callback
     def _on_disconnect(self) -> None:
